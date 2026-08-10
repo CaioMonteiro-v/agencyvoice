@@ -45,10 +45,11 @@ const hasEleven =
   !looksLikeKeyId;
 
 function resolveProvider(): "elevenlabs" | "local" {
+  if (PROVIDER_CFG === "local") return "local";
   if (PROVIDER_CFG === "elevenlabs") {
+    // Sem sk_ válida, não quebra o boot no Render — cai para local/offline amigável
     return hasEleven ? "elevenlabs" : "local";
   }
-  if (PROVIDER_CFG === "local") return "local";
   return hasEleven ? "elevenlabs" : "local";
 }
 
@@ -124,7 +125,19 @@ app.get("/api/health", async (_req, res) => {
       provider: "local",
       engine: "agencyvoice-xtts-v2",
       message:
-        "Você colou o ID da chave ElevenLabs, não o secret. Copie a chave sk_… em Profile → API Keys. Usando AgencyVoice AI local por enquanto.",
+        "ELEVENLABS_API_KEY parece ser Key ID (hex). No Render → Environment, cole a secret sk_…. Usando fallback local.",
+    });
+  }
+
+  if (PROVIDER_CFG === "elevenlabs" && !hasEleven) {
+    // Boot saudável no Render mesmo sem chave — UI orienta a configurar
+    return res.json({
+      ok: true,
+      mode: "booting",
+      provider: "elevenlabs",
+      engine: "elevenlabs-js",
+      message:
+        "Serviço no ar. Configure ELEVENLABS_API_KEY=sk_… nas Environment Variables do Render para ativar a clonagem.",
     });
   }
 
