@@ -4,28 +4,27 @@ import {
   creationAudioUrl,
   deleteCreation,
   deletePronunciation,
+  deleteSample,
   deleteVoice,
   generateSpeech,
   getHealth,
-  listCreations,
+  getVoiceProfile,
   listPronunciations,
   listVoices,
   previewPronunciation,
+  sampleAudioUrl,
   savePronunciation,
+  trainVoice,
   type CreationRecord,
   type PronunciationRule,
   type VoiceRecord,
+  type VoiceSampleRecord,
 } from "./api";
 import { useAudioRecorder } from "./hooks/useAudioRecorder";
 
 type View = "landing" | "studio";
-type StudioTab =
-  | "capturar"
-  | "clonar"
-  | "gerar"
-  | "criacoes"
-  | "vozes"
-  | "pronuncia";
+type StudioPage = "biblioteca" | "pronuncia" | "nova" | "perfil";
+type ProfileSection = "treinar" | "gerar" | "criacoes" | "nomes";
 
 function Brand({ onClick }: { onClick?: () => void }) {
   return (
@@ -36,15 +35,31 @@ function Brand({ onClick }: { onClick?: () => void }) {
   );
 }
 
+function formatWhen(iso?: string) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function formatSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
 function Landing({ onStart }: { onStart: () => void }) {
   return (
     <div className="page">
       <header className="topbar">
         <Brand />
         <div className="topbar-actions">
-          <a className="btn btn-ghost" href="#como-funciona">
-            Como funciona
-          </a>
           <button className="btn btn-primary" type="button" onClick={onStart}>
             Abrir estúdio
           </button>
@@ -55,18 +70,15 @@ function Landing({ onStart }: { onStart: () => void }) {
         <h1 className="hero-brand">
           Agency<span>Voice</span>
         </h1>
-        <h2>Nossa IA. A voz do seu candidato.</h2>
+        <h2>A voz do candidato. Melhor a cada áudio.</h2>
         <p>
-          AgencyVoice é uma IA própria de clonagem de voz: capture o áudio,
-          treine o perfil vocal e gere spots de campanha sob demanda.
+          Crie o perfil (ex.: Fábio), alimente com várias gravações e vá
+          treinando até a fala sair natural — inclusive os nomes da campanha.
         </p>
         <div className="hero-cta">
           <button className="btn btn-primary" type="button" onClick={onStart}>
-            Começar clonagem
+            Ir para a Biblioteca
           </button>
-          <a className="btn btn-ghost" href="#como-funciona">
-            Ver o fluxo
-          </a>
         </div>
         <div className="wave-visual" aria-hidden>
           {Array.from({ length: 48 }).map((_, i) => (
@@ -80,50 +92,6 @@ function Landing({ onStart }: { onStart: () => void }) {
           ))}
         </div>
       </section>
-
-      <section className="section" id="como-funciona">
-        <div className="section-head">
-          <h3>Clonar, guardar e treinar nomes.</h3>
-          <p>
-            Biblioteca de vozes, histórico de criações e dicionário de
-            pronúncia — para a IA falar nomes da campanha do jeito certo.
-          </p>
-        </div>
-        <div className="steps">
-          <article className="step">
-            <div className="step-num">01</div>
-            <h4>Capture e clone</h4>
-            <p>
-              Grave ou envie áudio limpo do candidato e salve a voz na
-              biblioteca.
-            </p>
-          </article>
-          <article className="step">
-            <div className="step-num">02</div>
-            <h4>Gere e guarde</h4>
-            <p>
-              Produza spots e abra a aba Criações para ouvir de novo e baixar.
-            </p>
-          </article>
-          <article className="step">
-            <div className="step-num">03</div>
-            <h4>Treine nomes</h4>
-            <p>
-              Cadastre como cada nome deve soar — a síntese aplica o alias
-              automaticamente.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <footer className="notice">
-        <p>
-          <strong>Uso responsável:</strong> clone apenas vozes com autorização
-          expressa do titular (o próprio candidato ou representante legal).
-          Conteúdo gerado deve seguir a legislação eleitoral e as políticas da
-          plataforma de voz utilizada.
-        </p>
-      </footer>
     </div>
   );
 }
@@ -146,34 +114,107 @@ function MicIcon({ recording }: { recording: boolean }) {
   );
 }
 
-function formatWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString("pt-BR", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+function SampleCapture({
+  recorder,
+  drag,
+  setDrag,
+}: {
+  recorder: ReturnType<typeof useAudioRecorder>;
+  drag: boolean;
+  setDrag: (v: boolean) => void;
+}) {
+  return (
+    <div className="grid-2">
+      <div>
+        <div className="recorder">
+          <button
+            type="button"
+            className={`mic-btn ${recorder.recording ? "recording" : ""}`}
+            onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}
+            aria-label={recorder.recording ? "Parar gravação" : "Iniciar gravação"}
+          >
+            <MicIcon recording={recorder.recording} />
+          </button>
+          <div className="timer">{recorder.elapsed}</div>
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.92rem" }}>
+            {recorder.recording
+              ? "Gravando… clique para parar"
+              : "Grave fala limpa do candidato"}
+          </p>
+        </div>
+        <div
+          className={`upload-zone ${drag ? "drag" : ""}`}
+          style={{ marginTop: "1rem" }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDrag(true);
+          }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDrag(false);
+            if (e.dataTransfer.files.length) recorder.addFiles(e.dataTransfer.files);
+          }}
+        >
+          <input
+            type="file"
+            accept="audio/*,.mp3,.wav,.webm,.m4a,.ogg"
+            multiple
+            onChange={(e) => {
+              if (e.target.files) recorder.addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          Ou arraste / envie arquivos de áudio
+        </div>
+      </div>
+      <div>
+        <h3 className="panel-sub">Fila ({recorder.samples.length})</h3>
+        {recorder.samples.length === 0 ? (
+          <p className="empty">Nenhum áudio na fila ainda.</p>
+        ) : (
+          <div className="samples">
+            {recorder.samples.map((s) => (
+              <div className="sample" key={s.id}>
+                <div className="meta">
+                  <strong>{s.file.name}</strong>
+                  <span>
+                    {s.source === "record" ? "Gravação" : "Upload"} · {s.durationLabel}
+                  </span>
+                  <audio src={s.url} controls preload="metadata" />
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{ padding: "0.45rem 0.75rem" }}
+                  onClick={() => recorder.removeSample(s.id)}
+                >
+                  Remover
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {recorder.error && <div className="alert error">{recorder.error}</div>}
+      </div>
+    </div>
+  );
 }
 
 function Studio({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<StudioTab>("capturar");
-  const [mode, setMode] = useState<"live" | "booting" | "offline" | "demo">(
-    "booting"
-  );
+  const [page, setPage] = useState<StudioPage>("biblioteca");
+  const [profileSection, setProfileSection] = useState<ProfileSection>("treinar");
+  const [mode, setMode] = useState<"live" | "booting" | "offline" | "demo">("booting");
   const [modeMsg, setModeMsg] = useState("");
-  const [device, setDevice] = useState<string>("");
   const [provider, setProvider] = useState<"elevenlabs" | "local" | "">("");
+  const [voices, setVoices] = useState<VoiceRecord[]>([]);
+  const [activeVoice, setActiveVoice] = useState<VoiceRecord | null>(null);
+  const [samples, setSamples] = useState<VoiceSampleRecord[]>([]);
+  const [creations, setCreations] = useState<CreationRecord[]>([]);
+  const [pronunciations, setPronunciations] = useState<PronunciationRule[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [consent, setConsent] = useState(false);
-  const [voices, setVoices] = useState<VoiceRecord[]>([]);
-  const [creations, setCreations] = useState<CreationRecord[]>([]);
-  const [pronunciations, setPronunciations] = useState<PronunciationRule[]>([]);
-  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
   const [script, setScript] = useState(
     "Olá, eu sou candidato a representar você. Juntos vamos transformar nossa cidade."
   );
@@ -195,16 +236,22 @@ function Studio({ onBack }: { onBack: () => void }) {
 
   const recorder = useAudioRecorder();
 
-  const refreshLibrary = async () => {
-    const [v, c, p] = await Promise.all([
-      listVoices().catch(() => [] as VoiceRecord[]),
-      listCreations().catch(() => [] as CreationRecord[]),
-      listPronunciations().catch(() => [] as PronunciationRule[]),
-    ]);
-    setVoices(v);
-    setCreations(c);
-    setPronunciations(p);
-    setSelectedVoiceId((prev) => prev || v[0]?.id || null);
+  const refreshVoices = async () => {
+    const list = await listVoices().catch(() => [] as VoiceRecord[]);
+    setVoices(list);
+    return list;
+  };
+
+  const openProfile = async (id: string, section: ProfileSection = "treinar") => {
+    const profile = await getVoiceProfile(id);
+    setActiveVoice(profile.voice);
+    setSamples(profile.samples);
+    setCreations(profile.creations);
+    const rules = await listPronunciations(id).catch(() => [] as PronunciationRule[]);
+    setPronunciations(rules);
+    setProfileSection(section);
+    setPage("perfil");
+    setAlert(null);
   };
 
   useEffect(() => {
@@ -212,14 +259,13 @@ function Studio({ onBack }: { onBack: () => void }) {
       .then((h) => {
         setMode(h.mode);
         setModeMsg(h.message);
-        setDevice(h.device || "");
         setProvider(h.provider || "");
       })
       .catch(() => {
         setMode("offline");
         setModeMsg("Gateway offline — rode npm run dev.");
       });
-    refreshLibrary().catch(() => undefined);
+    refreshVoices().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -228,14 +274,12 @@ function Studio({ onBack }: { onBack: () => void }) {
     };
   }, [audioUrl]);
 
-  const canClone = useMemo(
+  const canCreate = useMemo(
     () => name.trim().length > 0 && consent && recorder.samples.length > 0 && !busy,
     [name, consent, recorder.samples.length, busy]
   );
 
-  const selectedVoice = voices.find((v) => v.id === selectedVoiceId) || null;
-
-  const handleClone = async () => {
+  const handleCreate = async () => {
     setAlert(null);
     setBusy(true);
     try {
@@ -245,17 +289,43 @@ function Studio({ onBack }: { onBack: () => void }) {
         consent,
         files: recorder.samples.map((s) => s.file),
       });
-      setVoices((prev) => [result.voice, ...prev.filter((v) => v.id !== result.voice.id)]);
-      setSelectedVoiceId(result.voice.id);
-      setAlert({ type: "ok", text: result.message });
-      setTab("gerar");
       recorder.clearSamples();
       setConsent(false);
-      await refreshLibrary();
+      setName("");
+      setDescription("");
+      await refreshVoices();
+      setAlert({ type: "ok", text: result.message });
+      await openProfile(result.voice.id, "treinar");
     } catch (err) {
       setAlert({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro ao clonar voz.",
+        text: err instanceof Error ? err.message : "Erro ao criar perfil.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleTrain = async () => {
+    if (!activeVoice || recorder.samples.length === 0) return;
+    setAlert(null);
+    setBusy(true);
+    try {
+      const hasRecord = recorder.samples.some((s) => s.source === "record");
+      const result = await trainVoice({
+        voiceId: activeVoice.id,
+        files: recorder.samples.map((s) => s.file),
+        source: hasRecord ? "record" : "upload",
+      });
+      setActiveVoice(result.voice);
+      setSamples(result.samples);
+      recorder.clearSamples();
+      await refreshVoices();
+      setAlert({ type: "ok", text: result.message });
+    } catch (err) {
+      setAlert({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao treinar.",
       });
     } finally {
       setBusy(false);
@@ -263,7 +333,7 @@ function Studio({ onBack }: { onBack: () => void }) {
   };
 
   const handleGenerate = async () => {
-    if (!selectedVoiceId || !script.trim()) return;
+    if (!activeVoice || !script.trim()) return;
     setAlert(null);
     setBusy(true);
     if (audioUrl) {
@@ -272,113 +342,62 @@ function Studio({ onBack }: { onBack: () => void }) {
     }
     try {
       const result = await generateSpeech({
-        voiceId: selectedVoiceId,
+        voiceId: activeVoice.id,
         text: script.trim(),
         stability,
         similarityBoost: similarity,
         title: creationTitle.trim() || undefined,
         save: true,
       });
-
       if (result.blob) {
-        const url = URL.createObjectURL(result.blob);
-        setAudioUrl(url);
+        setAudioUrl(URL.createObjectURL(result.blob));
+        const profile = await getVoiceProfile(activeVoice.id);
+        setCreations(profile.creations);
         setAlert({
           type: "ok",
-          text: result.creationId
-            ? "Áudio gerado e salvo na aba Criações."
-            : "Áudio gerado com a voz clonada.",
+          text: "Áudio gerado e salvo nas criações deste perfil.",
         });
-        await refreshLibrary();
         return;
       }
-
       setAlert({
         type: "error",
-        text: result.message || "A IA não retornou áudio. Verifique o motor.",
+        text: result.message || "A IA não retornou áudio.",
       });
     } catch (err) {
       setAlert({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro ao gerar áudio.",
+        text: err instanceof Error ? err.message : "Erro ao gerar.",
       });
     } finally {
       setBusy(false);
     }
   };
 
-  const handleDeleteVoice = async (id: string) => {
-    try {
-      await deleteVoice(id);
-      setVoices((prev) => prev.filter((v) => v.id !== id));
-      if (selectedVoiceId === id) setSelectedVoiceId(null);
-      setAlert({ type: "ok", text: "Voz removida da biblioteca." });
-    } catch (err) {
-      setAlert({
-        type: "error",
-        text: err instanceof Error ? err.message : "Erro ao remover voz.",
-      });
-    }
-  };
-
-  const handleDeleteCreation = async (id: string) => {
-    try {
-      await deleteCreation(id);
-      setCreations((prev) => prev.filter((c) => c.id !== id));
-      if (playingCreationId === id) setPlayingCreationId(null);
-    } catch (err) {
-      setAlert({
-        type: "error",
-        text: err instanceof Error ? err.message : "Erro ao remover criação.",
-      });
-    }
-  };
-
-  const handleSavePronunciation = async () => {
+  const handleSavePronunciation = async (forVoice?: string) => {
     setAlert(null);
     try {
       await savePronunciation({
         word: word.trim(),
         alias: alias.trim(),
         note: note.trim() || undefined,
+        voiceId: forVoice,
       });
       setWord("");
       setAlias("");
       setNote("");
-      const list = await listPronunciations();
+      const list = await listPronunciations(forVoice);
       setPronunciations(list);
       setAlert({
         type: "ok",
-        text: "Pronúncia salva. Na próxima geração, nomes serão substituídos pelo alias.",
+        text: "Pronúncia salva. Na geração, o nome será falado pelo alias.",
       });
     } catch (err) {
       setAlert({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro ao salvar pronúncia.",
+        text: err instanceof Error ? err.message : "Erro ao salvar.",
       });
     }
   };
-
-  const handlePreview = async () => {
-    try {
-      const r = await previewPronunciation(previewText || script);
-      setPreviewSpoken(r.spoken);
-    } catch (err) {
-      setAlert({
-        type: "error",
-        text: err instanceof Error ? err.message : "Erro no preview.",
-      });
-    }
-  };
-
-  const tabs: Array<[StudioTab, string, string]> = [
-    ["capturar", "Capturar", "Áudio"],
-    ["clonar", "Clonar", "Treinar"],
-    ["gerar", "Gerar", "Texto → fala"],
-    ["criacoes", "Criações", "Biblioteca"],
-    ["vozes", "Vozes", "Armazenadas"],
-    ["pronuncia", "Pronúncia", "Nomes"],
-  ];
 
   return (
     <div className="page studio-shell">
@@ -389,8 +408,8 @@ function Studio({ onBack }: { onBack: () => void }) {
             <span className="dot" />
             {mode === "live"
               ? provider === "elevenlabs"
-                ? "ElevenLabs conectado"
-                : `AgencyVoice AI · ${device || "pronta"}`
+                ? "ElevenLabs"
+                : "AgencyVoice AI"
               : mode === "booting"
                 ? "Carregando…"
                 : "Offline"}
@@ -401,7 +420,7 @@ function Studio({ onBack }: { onBack: () => void }) {
         </div>
       </header>
 
-      {modeMsg && (
+      {modeMsg && page === "biblioteca" && (
         <div
           className={`alert ${mode === "live" ? "ok" : mode === "offline" ? "error" : "info"}`}
           style={{ marginBottom: "1rem" }}
@@ -410,96 +429,274 @@ function Studio({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      <nav className="progress studio-tabs" aria-label="Abas do estúdio">
-        {tabs.map(([id, title, sub]) => (
+      {page !== "perfil" && (
+        <nav className="progress studio-tabs studio-tabs-compact" aria-label="Navegação">
           <button
-            key={id}
             type="button"
-            className={tab === id ? "active" : ""}
+            className={page === "biblioteca" || page === "nova" ? "active" : ""}
             onClick={() => {
+              setPage("biblioteca");
               setAlert(null);
-              setTab(id);
+              refreshVoices();
             }}
           >
-            <small>{title}</small>
-            <strong>{sub}</strong>
+            <small>Estúdio</small>
+            <strong>Biblioteca</strong>
           </button>
-        ))}
-      </nav>
+          <button
+            type="button"
+            className={page === "pronuncia" ? "active" : ""}
+            onClick={async () => {
+              setPage("pronuncia");
+              setAlert(null);
+              setPronunciations(await listPronunciations().catch(() => []));
+            }}
+          >
+            <small>Campanha</small>
+            <strong>Pronúncia</strong>
+          </button>
+        </nav>
+      )}
 
-      {tab === "capturar" && (
+      {page === "biblioteca" && (
         <section className="panel">
-          <h2>Capturar áudio</h2>
-          <p className="lead">
-            Grave 1–5 minutos de fala limpa ou envie arquivos (webm, mp3, wav).
-            Quanto melhor a amostra, mais fiel o clone.
-          </p>
-          <div className="grid-2">
+          <div className="library-head">
             <div>
-              <div className="recorder">
-                <button
-                  type="button"
-                  className={`mic-btn ${recorder.recording ? "recording" : ""}`}
-                  onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}
-                  aria-label={recorder.recording ? "Parar gravação" : "Iniciar gravação"}
-                >
-                  <MicIcon recording={recorder.recording} />
-                </button>
-                <div className="timer">{recorder.elapsed}</div>
-                <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.92rem" }}>
-                  {recorder.recording
-                    ? "Gravando… clique para parar"
-                    : "Clique no microfone para gravar"}
-                </p>
-              </div>
+              <h2>Biblioteca de vozes</h2>
+              <p className="lead" style={{ marginBottom: 0 }}>
+                Abra um perfil (como Fábio), alimente com vários áudios e vá
+                treinando até ficar bom.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setPage("nova");
+                setAlert(null);
+                recorder.clearSamples();
+              }}
+            >
+              Nova voz
+            </button>
+          </div>
 
-              <div
-                className={`upload-zone ${drag ? "drag" : ""}`}
-                style={{ marginTop: "1rem" }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDrag(true);
-                }}
-                onDragLeave={() => setDrag(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDrag(false);
-                  if (e.dataTransfer.files.length) recorder.addFiles(e.dataTransfer.files);
+          {voices.length === 0 ? (
+            <p className="empty" style={{ marginTop: "1.5rem" }}>
+              Nenhum perfil ainda. Crie o primeiro com “Nova voz”.
+            </p>
+          ) : (
+            <div className="profile-grid">
+              {voices.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  className="profile-card"
+                  onClick={() => openProfile(v.id).catch((err) =>
+                    setAlert({
+                      type: "error",
+                      text: err instanceof Error ? err.message : "Erro ao abrir.",
+                    })
+                  )}
+                >
+                  <div className="profile-avatar" aria-hidden>
+                    {(v.name || "?").slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="profile-card-body">
+                    <strong>{v.name}</strong>
+                    <span>
+                      {v.sampleCount} áudio(s) · {v.provider || "voz"}
+                    </span>
+                    <span>Treino: {formatWhen(v.lastTrainedAt || v.updatedAt)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {alert && page === "biblioteca" && (
+            <div className={`alert ${alert.type}`}>{alert.text}</div>
+          )}
+        </section>
+      )}
+
+      {page === "nova" && (
+        <section className="panel">
+          <button
+            type="button"
+            className="btn btn-ghost back-link"
+            onClick={() => setPage("biblioteca")}
+          >
+            ← Voltar à Biblioteca
+          </button>
+          <h2>Nova voz</h2>
+          <p className="lead">
+            Crie o perfil do candidato. Depois você abre a página dele e
+            continua adicionando áudios para treinar.
+          </p>
+          <div className="field">
+            <label htmlFor="voice-name">Nome do perfil</label>
+            <input
+              id="voice-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex.: Fábio"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="voice-desc">Descrição (opcional)</label>
+            <textarea
+              id="voice-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Tom de comício, sotaque…"
+            />
+          </div>
+          <SampleCapture recorder={recorder} drag={drag} setDrag={setDrag} />
+          <label className="consent" style={{ marginTop: "1rem" }}>
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+            />
+            <span>
+              Confirmo autorização legal para capturar e clonar esta voz.
+            </span>
+          </label>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!canCreate}
+              onClick={handleCreate}
+            >
+              {busy ? "Criando…" : "Criar perfil e clonar"}
+            </button>
+          </div>
+          {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
+        </section>
+      )}
+
+      {page === "perfil" && activeVoice && (
+        <section className="panel profile-page">
+          <button
+            type="button"
+            className="btn btn-ghost back-link"
+            onClick={() => {
+              setPage("biblioteca");
+              setActiveVoice(null);
+              refreshVoices();
+            }}
+          >
+            ← Biblioteca
+          </button>
+
+          <header className="profile-hero">
+            <div className="profile-avatar lg" aria-hidden>
+              {activeVoice.name.slice(0, 1).toUpperCase()}
+            </div>
+            <div>
+              <h2>{activeVoice.name}</h2>
+              <p>
+                {activeVoice.sampleCount} áudio(s) de treino ·{" "}
+                {activeVoice.engine || activeVoice.provider}
+                {activeVoice.description ? ` · ${activeVoice.description}` : ""}
+              </p>
+              <p className="muted-line">
+                Último treino: {formatWhen(activeVoice.lastTrainedAt || activeVoice.updatedAt)}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-danger"
+              style={{ marginLeft: "auto", alignSelf: "flex-start" }}
+              onClick={async () => {
+                if (!confirm(`Excluir o perfil ${activeVoice.name}?`)) return;
+                await deleteVoice(activeVoice.id);
+                setPage("biblioteca");
+                setActiveVoice(null);
+                await refreshVoices();
+              }}
+            >
+              Excluir perfil
+            </button>
+          </header>
+
+          <nav className="profile-sections" aria-label="Seções do perfil">
+            {(
+              [
+                ["treinar", "Treinar"],
+                ["gerar", "Gerar"],
+                ["criacoes", "Criações"],
+                ["nomes", "Nomes"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={profileSection === id ? "active" : ""}
+                onClick={() => {
+                  setAlert(null);
+                  setProfileSection(id);
                 }}
               >
-                <input
-                  type="file"
-                  accept="audio/*,.mp3,.wav,.webm,.m4a,.ogg"
-                  multiple
-                  onChange={(e) => {
-                    if (e.target.files) recorder.addFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-                Arraste arquivos de áudio ou clique para enviar
-              </div>
-            </div>
+                {label}
+              </button>
+            ))}
+          </nav>
 
-            <div>
-              <h3 className="panel-sub">Amostras ({recorder.samples.length})</h3>
-              {recorder.samples.length === 0 ? (
-                <p className="empty">Nenhuma amostra ainda.</p>
+          {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
+
+          {profileSection === "treinar" && (
+            <div className="profile-section">
+              <h3 className="panel-sub">Alimentar a IA</h3>
+              <p className="empty" style={{ marginBottom: "1rem" }}>
+                Quanto mais áudio limpo do {activeVoice.name}, melhor o clone.
+                Grave nomes, frases longas e o jeito natural de falar.
+              </p>
+              <SampleCapture recorder={recorder} drag={drag} setDrag={setDrag} />
+              <div className="actions" style={{ marginTop: "1rem" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={recorder.samples.length === 0 || busy}
+                  onClick={handleTrain}
+                >
+                  {busy
+                    ? "Treinando…"
+                    : `Adicionar ${recorder.samples.length || ""} áudio(s) e atualizar voz`}
+                </button>
+              </div>
+
+              <h3 className="panel-sub" style={{ marginTop: "2rem" }}>
+                Áudios no perfil ({samples.length})
+              </h3>
+              {samples.length === 0 ? (
+                <p className="empty">Ainda sem amostras salvas neste servidor.</p>
               ) : (
                 <div className="samples">
-                  {recorder.samples.map((s) => (
+                  {samples.map((s) => (
                     <div className="sample" key={s.id}>
                       <div className="meta">
-                        <strong>{s.file.name}</strong>
+                        <strong>{s.originalName}</strong>
                         <span>
-                          {s.source === "record" ? "Gravação" : "Upload"} · {s.durationLabel}
+                          {s.source} · {formatSize(s.size)} · {formatWhen(s.createdAt)}
                         </span>
-                        <audio src={s.url} controls preload="metadata" />
+                        <audio
+                          src={sampleAudioUrl(activeVoice.id, s.id)}
+                          controls
+                          preload="metadata"
+                        />
                       </div>
                       <button
                         type="button"
                         className="btn btn-danger"
                         style={{ padding: "0.45rem 0.75rem" }}
-                        onClick={() => recorder.removeSample(s.id)}
+                        onClick={async () => {
+                          await deleteSample(activeVoice.id, s.id);
+                          const profile = await getVoiceProfile(activeVoice.id);
+                          setSamples(profile.samples);
+                          setActiveVoice(profile.voice);
+                        }}
                       >
                         Remover
                       </button>
@@ -507,183 +704,30 @@ function Studio({ onBack }: { onBack: () => void }) {
                   ))}
                 </div>
               )}
-              {(recorder.error || alert) && (
-                <div className={`alert ${recorder.error ? "error" : alert?.type || "info"}`}>
-                  {recorder.error || alert?.text}
-                </div>
-              )}
-              <div className="actions" style={{ marginTop: "1.25rem" }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={recorder.samples.length === 0}
-                  onClick={() => {
-                    setAlert(null);
-                    setTab("clonar");
-                  }}
-                >
-                  Continuar para clonar
-                </button>
-              </div>
             </div>
-          </div>
-        </section>
-      )}
+          )}
 
-      {tab === "clonar" && (
-        <section className="panel">
-          <h2>Clonar a voz</h2>
-          <p className="lead">
-            Dê um nome ao perfil vocal e confirme a autorização. A voz fica
-            salva na aba Vozes para reutilizar.
-            {provider === "elevenlabs"
-              ? " Clonagem via Instant Voice Cloning (ElevenLabs)."
-              : " A AgencyVoice AI cria o clone localmente."}
-          </p>
-          <div className="grid-2">
-            <div>
+          {profileSection === "gerar" && (
+            <div className="profile-section">
+              <h3 className="panel-sub">Gerar com a voz de {activeVoice.name}</h3>
               <div className="field">
-                <label htmlFor="voice-name">Nome do candidato / voz</label>
-                <input
-                  id="voice-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Ex.: Candidato Silva"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="voice-desc">Descrição (opcional)</label>
-                <textarea
-                  id="voice-desc"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Tom firme, sotaque paulista, ritmo de comício…"
-                />
-              </div>
-              <label className="consent">
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(e) => setConsent(e.target.checked)}
-                />
-                <span>
-                  Confirmo que tenho autorização legal para capturar e clonar
-                  esta voz, e que o uso respeitará a legislação eleitoral e os
-                  termos da API de voz.
-                </span>
-              </label>
-              <div className="actions">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setTab("capturar")}
-                >
-                  Voltar
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!canClone}
-                  onClick={handleClone}
-                >
-                  {busy ? "Clonando…" : `Clonar com ${recorder.samples.length} amostra(s)`}
-                </button>
-              </div>
-              {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
-            </div>
-            <div>
-              <h3 className="panel-sub">Biblioteca rápida</h3>
-              {voices.length === 0 ? (
-                <p className="empty">Nenhuma voz clonada ainda.</p>
-              ) : (
-                <div className="voice-list">
-                  {voices.slice(0, 6).map((v) => (
-                    <div key={v.id} className="voice-item">
-                      <div>
-                        <strong>{v.name}</strong>
-                        <span>
-                          {v.engine || "AgencyVoice AI"} · {v.sampleCount} amostra(s)
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ marginTop: "1rem" }}
-                onClick={() => setTab("vozes")}
-              >
-                Ver todas as vozes
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {tab === "gerar" && (
-        <section className="panel">
-          <h2>Gerar fala</h2>
-          <p className="lead">
-            Escreva o roteiro, gere o áudio e ele entra automaticamente na aba
-            Criações. Nomes cadastrados em Pronúncia são aplicados na síntese.
-          </p>
-          <div className="grid-2">
-            <div>
-              <div className="field">
-                <label>Voz selecionada</label>
-                {voices.length === 0 ? (
-                  <p className="empty">
-                    Nenhuma voz ainda.{" "}
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: "0.3rem 0.7rem", display: "inline-flex" }}
-                      onClick={() => setTab("capturar")}
-                    >
-                      Capturar áudio
-                    </button>
-                  </p>
-                ) : (
-                  <div className="voice-list">
-                    {voices.map((v) => (
-                      <button
-                        key={v.id}
-                        type="button"
-                        className={`voice-item ${selectedVoiceId === v.id ? "selected" : ""}`}
-                        onClick={() => setSelectedVoiceId(v.id)}
-                      >
-                        <div>
-                          <strong>{v.name}</strong>
-                          <span>{v.engine || "AgencyVoice AI"}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="field">
-                <label htmlFor="creation-title">Título da criação (opcional)</label>
+                <label htmlFor="creation-title">Título (opcional)</label>
                 <input
                   id="creation-title"
                   value={creationTitle}
                   onChange={(e) => setCreationTitle(e.target.value)}
-                  placeholder="Ex.: Spot rádio 30s — zona norte"
+                  placeholder="Spot rádio 30s"
                 />
               </div>
-
               <div className="field">
                 <label htmlFor="script">Roteiro</label>
                 <textarea
                   id="script"
                   value={script}
                   onChange={(e) => setScript(e.target.value)}
-                  placeholder="Digite o texto que a voz clonada deve falar…"
+                  placeholder="Texto que a voz deve falar…"
                 />
               </div>
-
               <div className="sliders">
                 <div className="slider">
                   <label>
@@ -714,265 +758,190 @@ function Studio({ onBack }: { onBack: () => void }) {
                   />
                 </div>
               </div>
-
               <div className="actions">
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={!selectedVoice || !script.trim() || busy}
+                  disabled={!script.trim() || busy}
                   onClick={handleGenerate}
                 >
                   {busy ? "Gerando…" : "Gerar e salvar"}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setTab("criacoes")}
-                >
-                  Ver criações
-                </button>
               </div>
-
-              {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
-
               {audioUrl && (
                 <div className="player-box">
                   <strong>Resultado</strong>
                   <audio src={audioUrl} controls autoPlay />
-                  <div className="actions" style={{ marginTop: "0.75rem" }}>
-                    <a
-                      className="btn btn-ghost"
-                      href={audioUrl}
-                      download={
-                        provider === "elevenlabs"
-                          ? "agencyvoice.mp3"
-                          : "agencyvoice.wav"
-                      }
-                    >
-                      Baixar áudio
-                    </a>
-                  </div>
                 </div>
               )}
             </div>
+          )}
 
-            <div>
-              <h3 className="panel-sub">Dicas</h3>
-              <p className="empty" style={{ marginBottom: "0.75rem" }}>
-                Cadastre nomes difíceis na aba Pronúncia (ex.: &quot;João&quot; →
-                &quot;Juão&quot;) antes de gerar.
-              </p>
-              <p className="empty">
-                Motor:{" "}
-                <strong style={{ color: "var(--foam)" }}>
-                  {provider === "elevenlabs"
-                    ? "elevenlabs · eleven_multilingual_v2"
-                    : "agencyvoice-xtts-v2"}
-                </strong>
-                {device ? ` (${device})` : ""}.
-              </p>
-              {pronunciations.length > 0 && (
-                <div style={{ marginTop: "1rem" }}>
-                  <h3 className="panel-sub">Regras ativas ({pronunciations.length})</h3>
-                  <ul className="rule-list">
-                    {pronunciations.slice(0, 8).map((r) => (
-                      <li key={r.id}>
-                        <strong>{r.word}</strong> → {r.alias}
-                      </li>
-                    ))}
-                  </ul>
+          {profileSection === "criacoes" && (
+            <div className="profile-section">
+              <h3 className="panel-sub">Criações de {activeVoice.name}</h3>
+              {creations.length === 0 ? (
+                <p className="empty">Nada gerado ainda neste perfil.</p>
+              ) : (
+                <div className="creation-list">
+                  {creations.map((c) => (
+                    <article key={c.id} className="creation-item">
+                      <div className="creation-meta">
+                        <strong>{c.title}</strong>
+                        <span>{formatWhen(c.createdAt)}</span>
+                        <p>{c.text}</p>
+                      </div>
+                      <div className="creation-actions">
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ padding: "0.45rem 0.85rem" }}
+                          onClick={() =>
+                            setPlayingCreationId((p) => (p === c.id ? null : c.id))
+                          }
+                        >
+                          {playingCreationId === c.id ? "Fechar" : "Ouvir"}
+                        </button>
+                        <a
+                          className="btn btn-ghost"
+                          style={{ padding: "0.45rem 0.85rem" }}
+                          href={creationAudioUrl(c.id)}
+                          download={c.filename}
+                        >
+                          Baixar
+                        </a>
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          style={{ padding: "0.45rem 0.85rem" }}
+                          onClick={async () => {
+                            await deleteCreation(c.id);
+                            setCreations((prev) => prev.filter((x) => x.id !== c.id));
+                          }}
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                      {playingCreationId === c.id && (
+                        <audio
+                          className="creation-player"
+                          src={creationAudioUrl(c.id)}
+                          controls
+                          autoPlay
+                        />
+                      )}
+                    </article>
+                  ))}
                 </div>
               )}
             </div>
-          </div>
-        </section>
-      )}
+          )}
 
-      {tab === "criacoes" && (
-        <section className="panel">
-          <h2>Criações</h2>
-          <p className="lead">
-            Histórico dos áudios gerados. Clique para ouvir de novo, baixar ou
-            excluir.
-          </p>
-          {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
-          {creations.length === 0 ? (
-            <p className="empty">
-              Nenhuma criação ainda. Gere um áudio na aba Gerar.
-            </p>
-          ) : (
-            <div className="creation-list">
-              {creations.map((c) => (
-                <article key={c.id} className="creation-item">
-                  <div className="creation-meta">
-                    <strong>{c.title}</strong>
-                    <span>
-                      {c.voiceName} · {formatWhen(c.createdAt)} · {c.provider}
-                    </span>
-                    <p>{c.text}</p>
-                    {c.textSpoken !== c.text && (
-                      <p className="spoken-hint">Falado como: {c.textSpoken}</p>
-                    )}
-                  </div>
-                  <div className="creation-actions">
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      style={{ padding: "0.45rem 0.85rem" }}
-                      onClick={() =>
-                        setPlayingCreationId((prev) => (prev === c.id ? null : c.id))
-                      }
-                    >
-                      {playingCreationId === c.id ? "Fechar" : "Ouvir"}
-                    </button>
-                    <a
-                      className="btn btn-ghost"
-                      style={{ padding: "0.45rem 0.85rem" }}
-                      href={creationAudioUrl(c.id)}
-                      download={c.filename}
-                    >
-                      Baixar
-                    </a>
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      style={{ padding: "0.45rem 0.85rem" }}
-                      onClick={() => handleDeleteCreation(c.id)}
-                    >
-                      Excluir
-                    </button>
-                  </div>
-                  {playingCreationId === c.id && (
-                    <audio
-                      className="creation-player"
-                      src={creationAudioUrl(c.id)}
-                      controls
-                      autoPlay
+          {profileSection === "nomes" && (
+            <div className="profile-section">
+              <h3 className="panel-sub">Pronúncia para {activeVoice.name}</h3>
+              <p className="empty" style={{ marginBottom: "1rem" }}>
+                Treine como nomes devem soar neste perfil. Ex.: palavra escrita
+                → como falar.
+              </p>
+              <div className="grid-2">
+                <div>
+                  <div className="field">
+                    <label>Nome escrito</label>
+                    <input
+                      value={word}
+                      onChange={(e) => setWord(e.target.value)}
+                      placeholder="Ex.: Guarujá"
                     />
-                  )}
-                </article>
-              ))}
-            </div>
-          )}
-          <div className="actions" style={{ marginTop: "1.25rem" }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => setTab("gerar")}
-            >
-              Nova geração
-            </button>
-          </div>
-        </section>
-      )}
-
-      {tab === "vozes" && (
-        <section className="panel">
-          <h2>Biblioteca de vozes</h2>
-          <p className="lead">
-            Vozes clonadas e sincronizadas. Selecione uma para gerar ou remova
-            as que não precisa mais.
-          </p>
-          {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
-          {voices.length === 0 ? (
-            <p className="empty">
-              Biblioteca vazia. Clone a primeira voz nas abas Capturar → Clonar.
-            </p>
-          ) : (
-            <div className="voice-list voice-library">
-              {voices.map((v) => (
-                <div
-                  key={v.id}
-                  className={`voice-item ${selectedVoiceId === v.id ? "selected" : ""}`}
-                >
-                  <div>
-                    <strong>{v.name}</strong>
-                    <span>
-                      {v.provider || "local"} · {v.engine || "—"} ·{" "}
-                      {v.sampleCount} amostra(s)
-                      {v.createdAt ? ` · ${formatWhen(v.createdAt)}` : ""}
-                    </span>
-                    {v.description && <span>{v.description}</span>}
                   </div>
-                  <div className="voice-actions">
+                  <div className="field">
+                    <label>Como deve soar</label>
+                    <input
+                      value={alias}
+                      onChange={(e) => setAlias(e.target.value)}
+                      placeholder="Ex.: Guaruujá"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Nota</label>
+                    <input
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="Opcional"
+                    />
+                  </div>
+                  <div className="actions">
                     <button
                       type="button"
                       className="btn btn-primary"
-                      style={{ padding: "0.4rem 0.75rem" }}
-                      onClick={() => {
-                        setSelectedVoiceId(v.id);
-                        setTab("gerar");
-                      }}
+                      disabled={!word.trim() || !alias.trim()}
+                      onClick={() => handleSavePronunciation(activeVoice.id)}
                     >
-                      Usar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      style={{ padding: "0.4rem 0.75rem" }}
-                      onClick={() => handleDeleteVoice(v.id)}
-                    >
-                      Excluir
+                      Salvar para este perfil
                     </button>
                   </div>
                 </div>
-              ))}
+                <div>
+                  <h3 className="panel-sub">Regras ({pronunciations.length})</h3>
+                  {pronunciations.length === 0 ? (
+                    <p className="empty">Nenhuma regra neste perfil.</p>
+                  ) : (
+                    <div className="voice-list">
+                      {pronunciations.map((r) => (
+                        <div key={r.id} className="voice-item">
+                          <div>
+                            <strong>
+                              {r.word} → {r.alias}
+                            </strong>
+                            <span>{r.note || (r.voiceId ? "Deste perfil" : "Global")}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-danger"
+                            style={{ padding: "0.4rem 0.7rem" }}
+                            onClick={async () => {
+                              await deletePronunciation(r.id);
+                              setPronunciations((prev) =>
+                                prev.filter((x) => x.id !== r.id)
+                              );
+                            }}
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
-          <div className="actions" style={{ marginTop: "1.25rem" }}>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => refreshLibrary()}
-            >
-              Atualizar biblioteca
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => setTab("capturar")}
-            >
-              Clonar nova voz
-            </button>
-          </div>
         </section>
       )}
 
-      {tab === "pronuncia" && (
+      {page === "pronuncia" && (
         <section className="panel">
-          <h2>Treinar pronúncia de nomes</h2>
+          <h2>Pronúncia de nomes</h2>
           <p className="lead">
-            Cadastre como a voz deve falar nomes e termos da campanha. Na
-            geração, a palavra escrita é trocada pelo alias fonético antes do
-            TTS.
+            Dicionário global da campanha. Regras por perfil ficam dentro da
+            página da voz na Biblioteca.
           </p>
           <div className="grid-2">
             <div>
               <div className="field">
-                <label htmlFor="pr-word">Nome / palavra escrita</label>
+                <label>Nome / palavra</label>
                 <input
-                  id="pr-word"
                   value={word}
                   onChange={(e) => setWord(e.target.value)}
                   placeholder="Ex.: Xi Jinping"
                 />
               </div>
               <div className="field">
-                <label htmlFor="pr-alias">Como deve soar (fonética aproximada)</label>
+                <label>Como deve soar</label>
                 <input
-                  id="pr-alias"
                   value={alias}
                   onChange={(e) => setAlias(e.target.value)}
                   placeholder="Ex.: Chi Chin ping"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="pr-note">Nota (opcional)</label>
-                <input
-                  id="pr-note"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Ex.: nome do aliado / cidade"
                 />
               </div>
               <div className="actions">
@@ -980,27 +949,30 @@ function Studio({ onBack }: { onBack: () => void }) {
                   type="button"
                   className="btn btn-primary"
                   disabled={!word.trim() || !alias.trim()}
-                  onClick={handleSavePronunciation}
+                  onClick={() => handleSavePronunciation()}
                 >
-                  Salvar pronúncia
+                  Salvar global
                 </button>
               </div>
               {alert && <div className={`alert ${alert.type}`}>{alert.text}</div>}
-
-              <div className="field" style={{ marginTop: "1.5rem" }}>
-                <label htmlFor="pr-preview">Prévia no texto</label>
+              <div className="field" style={{ marginTop: "1.25rem" }}>
+                <label>Prévia</label>
                 <textarea
-                  id="pr-preview"
                   value={previewText}
                   onChange={(e) => setPreviewText(e.target.value)}
-                  placeholder="Cole um trecho do roteiro para ver como ficará falado…"
+                  placeholder="Cole um trecho do roteiro…"
                 />
               </div>
-              <div className="actions">
-                <button type="button" className="btn btn-ghost" onClick={handlePreview}>
-                  Aplicar regras
-                </button>
-              </div>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={async () => {
+                  const r = await previewPronunciation(previewText);
+                  setPreviewSpoken(r.spoken);
+                }}
+              >
+                Aplicar regras
+              </button>
               {previewSpoken && (
                 <div className="player-box">
                   <strong>Texto enviado ao TTS</strong>
@@ -1010,13 +982,10 @@ function Studio({ onBack }: { onBack: () => void }) {
                 </div>
               )}
             </div>
-
             <div>
               <h3 className="panel-sub">Dicionário ({pronunciations.length})</h3>
               {pronunciations.length === 0 ? (
-                <p className="empty">
-                  Ainda sem regras. Ex.: &quot;Guarujá&quot; → &quot;Guaruujá&quot;.
-                </p>
+                <p className="empty">Vazio por enquanto.</p>
               ) : (
                 <div className="voice-list">
                   {pronunciations.map((r) => (
@@ -1025,7 +994,7 @@ function Studio({ onBack }: { onBack: () => void }) {
                         <strong>
                           {r.word} → {r.alias}
                         </strong>
-                        <span>{r.note || "Sem nota"}</span>
+                        <span>{r.voiceId ? `Perfil ${r.voiceId.slice(0, 8)}…` : "Global"}</span>
                       </div>
                       <button
                         type="button"
@@ -1054,7 +1023,6 @@ function Studio({ onBack }: { onBack: () => void }) {
 
 export default function App() {
   const [view, setView] = useState<View>("landing");
-
   return view === "landing" ? (
     <Landing onStart={() => setView("studio")} />
   ) : (

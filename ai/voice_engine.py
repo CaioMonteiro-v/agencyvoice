@@ -237,6 +237,35 @@ class VoiceEngine:
         files = sorted(refs.glob("*.wav"))
         return [str(p) for p in files]
 
+    def add_samples(
+        self,
+        *,
+        voice_id: str,
+        sample_paths: list[Path],
+    ) -> VoiceProfile:
+        """Alimenta o perfil com mais áudios — XTTS usa todas as refs na síntese."""
+        profile = self.get_voice(voice_id)
+        if not profile:
+            raise FileNotFoundError("Perfil de voz não encontrado.")
+        if not sample_paths:
+            raise ValueError("Envie pelo menos uma amostra de áudio.")
+
+        refs = self._refs_dir(voice_id)
+        refs.mkdir(parents=True, exist_ok=True)
+        existing = len(list(refs.glob("*.wav")))
+
+        for i, src in enumerate(sample_paths):
+            dest = refs / f"ref_{existing + i:02d}.wav"
+            self._convert_to_wav(Path(src), dest)
+
+        profile.sample_count = len(list(refs.glob("*.wav")))
+        profile.status = "ready"
+        self._meta_path(voice_id).write_text(
+            json.dumps(asdict(profile), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return profile
+
     def synthesize(
         self,
         *,

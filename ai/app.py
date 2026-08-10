@@ -135,6 +135,45 @@ def tts(body: TTSRequest) -> FileResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/voices/{voice_id}/samples")
+async def add_voice_samples(
+    voice_id: str,
+    files: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict:
+    """Adiciona áudios ao perfil para ir treinando / melhorando o clone."""
+    uploads = files or []
+    if not uploads:
+        raise HTTPException(status_code=400, detail="Envie pelo menos uma amostra.")
+
+    if not engine.get_voice(voice_id):
+        raise HTTPException(status_code=404, detail="Perfil de voz não encontrado.")
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="av_train_"))
+    try:
+        saved: list[Path] = []
+        for i, upload in enumerate(uploads):
+            suffix = Path(upload.filename or f"sample_{i}.wav").suffix or ".wav"
+            dest = tmpdir / f"sample_{i}{suffix}"
+            with dest.open("wb") as fh:
+                shutil.copyfileobj(upload.file, fh)
+            saved.append(dest)
+
+        profile = engine.add_samples(voice_id=voice_id, sample_paths=saved)
+        return {
+            "voice": profile.to_public(),
+            "message": f"Perfil atualizado com {len(saved)} nova(s) amostra(s).",
+        }
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("add samples failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 @app.delete("/voices/{voice_id}")
 def delete_voice(voice_id: str) -> dict:
     ok = engine.delete_voice(voice_id)

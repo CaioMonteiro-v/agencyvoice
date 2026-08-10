@@ -34,11 +34,10 @@ Health: `GET /api/health`
 
 Abra `https://<seu-servico>.onrender.com` → **Abrir estúdio**:
 
-1. **Capturar / Clonar** — grave ou envie áudio e salve a voz  
-2. **Gerar** — roteiro → fala (salva automaticamente em **Criações**)  
-3. **Criações** — ouça, baixe e gerencie spots gerados  
-4. **Vozes** — biblioteca das vozes clonadas (sincroniza com ElevenLabs)  
-5. **Pronúncia** — treine nomes (palavra → como deve soar)
+1. **Biblioteca** — lista de perfis (ex.: Fábio)  
+2. Abra o perfil → **Treinar** (adicione vários áudios e atualize a voz)  
+3. No mesmo perfil: **Gerar**, **Criações**, **Nomes** (pronúncia)  
+4. Aba **Pronúncia** — dicionário global da campanha
 
 > Free tier do Render “dorme” após inatividade; o primeiro request pode demorar ~1 min.  
-> Disco do plano free é efêmero: criações/pronúncias locais podem sumir no redeploy. Vozes clonadas na conta ElevenLabs voltam ao sincronizar a aba **Vozes**.
+> Disco do plano free é efêmero: amostras/criações locais podem sumir no redeploy. Vozes na conta ElevenLabs voltam ao sincronizar a Biblioteca.

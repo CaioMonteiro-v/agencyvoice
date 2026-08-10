@@ -1,9 +1,7 @@
 /**
  * AgencyVoice gateway
+ * - Biblioteca de perfis (ex.: Fábio) com amostras + retreino
  * - VOICE_PROVIDER=auto|elevenlabs|local
- * - ElevenLabs via SDK oficial @elevenlabs/elevenlabs-js
- * - Local via AgencyVoice AI (XTTS)
- * - Persistência: vozes, criações e pronúncias (data/)
  */
 import dotenv from "dotenv";
 import express from "express";
@@ -15,6 +13,7 @@ import FormData from "form-data";
 import fetch from "node-fetch";
 import { fileURLToPath } from "url";
 import {
+  addSamplesToVoice,
   cloneVoiceIvc,
   createElevenClient,
   deleteVoice as deleteElevenVoice,
@@ -42,7 +41,6 @@ const looksLikeKeyId =
   !ELEVEN_KEY.startsWith("sk_") &&
   /^[a-f0-9]{40,80}$/i.test(ELEVEN_KEY);
 
-/** Aceita sk_…; se for só hex (Key ID), marca como inválida. */
 const hasEleven =
   ELEVEN_KEY.length > 20 &&
   ELEVEN_KEY !== "sua_chave_aqui" &&
@@ -59,7 +57,6 @@ function resolveProvider(): "elevenlabs" | "local" {
 
 const eleven = hasEleven ? createElevenClient(ELEVEN_KEY) : null;
 
-/** Migra registry antigo voices/elevenlabs-registry.json → data/voices.json */
 function migrateLegacyRegistry() {
   const legacy = path.join(rootDir, "voices", "elevenlabs-registry.json");
   try {
@@ -83,7 +80,7 @@ app.use(express.json({ limit: "2mb" }));
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 10 },
+  limits: { fileSize: 25 * 1024 * 1024, files: 20 },
   fileFilter: (_req, file, cb) => {
     const ok =
       file.mimetype.startsWith("audio/") ||
@@ -100,32 +97,50 @@ async function aiFetch(pathname: string, init?: Parameters<typeof fetch>[1]) {
   return fetch(`${AI_URL}${pathname}`, init);
 }
 
+function saveUploadedSamples(
+  voiceId: string,
+  files: Express.Multer.File[],
+  source: "record" | "upload" | "clone" = "clone"
+) {
+  return files.map((f) =>
+    store.addSample({
+      voiceId,
+      buffer: f.buffer,
+      originalName: f.originalname || "sample.webm",
+      mimeType: f.mimetype || "audio/webm",
+      source,
+    })
+  );
+}
+
 async function syncElevenVoicesIntoStore() {
   if (!eleven) return store.listVoices().filter((v) => v.provider === "elevenlabs");
   try {
     const remote = await listElevenVoices(eleven);
-    const mapped: VoiceRecord[] = (remote || []).map((v) => {
-      const id = String(v.voiceId || (v as { voice_id?: string }).voice_id || "");
-      const samples =
-        (v as { samples?: unknown[] }).samples?.length ??
-        Number((v as { sampleCount?: number }).sampleCount ?? 0);
-      return {
-        id,
-        name: String(v.name || "Voz ElevenLabs"),
-        description: v.description ? String(v.description) : undefined,
-        sampleCount: samples,
-        createdAt: String(
-          (v as { createdAtUnix?: number }).createdAtUnix
-            ? new Date(
-                Number((v as { createdAtUnix?: number }).createdAtUnix) * 1000
-              ).toISOString()
-            : new Date().toISOString()
-        ),
-        demo: Boolean((v as { isOwner?: boolean }).isOwner === false),
-        engine: "elevenlabs",
-        provider: "elevenlabs" as const,
-      };
-    }).filter((v) => v.id);
+    const mapped: VoiceRecord[] = (remote || [])
+      .map((v) => {
+        const id = String(v.voiceId || (v as { voice_id?: string }).voice_id || "");
+        const samples =
+          (v as { samples?: unknown[] }).samples?.length ??
+          Number((v as { sampleCount?: number }).sampleCount ?? 0);
+        return {
+          id,
+          name: String(v.name || "Voz ElevenLabs"),
+          description: v.description ? String(v.description) : undefined,
+          sampleCount: Math.max(samples, store.listSamples(id).length),
+          createdAt: String(
+            (v as { createdAtUnix?: number }).createdAtUnix
+              ? new Date(
+                  Number((v as { createdAtUnix?: number }).createdAtUnix) * 1000
+                ).toISOString()
+              : new Date().toISOString()
+          ),
+          demo: Boolean((v as { isOwner?: boolean }).isOwner === false),
+          engine: "elevenlabs",
+          provider: "elevenlabs" as const,
+        };
+      })
+      .filter((v) => v.id);
     return store.mergeRemoteVoices(mapped);
   } catch (err) {
     console.warn("Falha ao sincronizar vozes ElevenLabs:", err);
@@ -168,7 +183,7 @@ app.get("/api/health", async (_req, res) => {
         engine: "elevenlabs-js · eleven_multilingual_v2",
         device: "cloud",
         message:
-          "ElevenLabs SDK conectado — Instant Voice Cloning + TTS ativos.",
+          "ElevenLabs conectado — clone, alimente amostras e gere na Biblioteca.",
       });
     } catch (err) {
       return res.status(503).json({
@@ -214,22 +229,23 @@ app.get("/api/voices", async (_req, res) => {
   if (resolveProvider() === "elevenlabs" || PROVIDER_CFG === "auto") {
     const synced = await syncElevenVoicesIntoStore();
     for (const v of synced) {
-      if (v.provider === "elevenlabs" || !v.id.startsWith("av_")) {
-        voices.push(v);
-        seen.add(v.id);
-      }
-    }
-    for (const v of store.listVoices()) {
       if (!seen.has(v.id)) {
-        voices.push(v);
+        voices.push({
+          ...v,
+          sampleCount: Math.max(v.sampleCount, store.listSamples(v.id).length),
+        });
         seen.add(v.id);
       }
     }
-  } else {
-    for (const v of store.listVoices()) {
-      voices.push(v);
-      seen.add(v.id);
-    }
+  }
+
+  for (const v of store.listVoices()) {
+    if (seen.has(v.id)) continue;
+    voices.push({
+      ...v,
+      sampleCount: Math.max(v.sampleCount, store.listSamples(v.id).length),
+    });
+    seen.add(v.id);
   }
 
   if (resolveProvider() === "local" || PROVIDER_CFG === "auto") {
@@ -246,7 +262,10 @@ app.get("/api/voices", async (_req, res) => {
             id,
             name: String(v.name),
             description: v.description ? String(v.description) : undefined,
-            sampleCount: Number(v.sample_count ?? v.sampleCount ?? 0),
+            sampleCount: Math.max(
+              Number(v.sample_count ?? v.sampleCount ?? 0),
+              store.listSamples(id).length
+            ),
             createdAt: String(v.created_at ?? v.createdAt ?? ""),
             demo: Boolean(v.demo),
             engine: String(v.engine || "agencyvoice-xtts-v2"),
@@ -262,11 +281,27 @@ app.get("/api/voices", async (_req, res) => {
     }
   }
 
-  voices.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  voices.sort((a, b) =>
+    (a.updatedAt || a.createdAt) < (b.updatedAt || b.createdAt) ? 1 : -1
+  );
   return res.json({ voices, provider: resolveProvider() });
 });
 
-app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
+app.get("/api/voices/:id", (req, res) => {
+  const voice = store.getVoice(req.params.id);
+  if (!voice) {
+    return res.status(404).json({ error: "Perfil de voz não encontrado." });
+  }
+  const samples = store.listSamples(voice.id);
+  const creations = store.listCreations(voice.id);
+  return res.json({
+    voice: { ...voice, sampleCount: Math.max(voice.sampleCount, samples.length) },
+    samples,
+    creations,
+  });
+});
+
+app.post("/api/voices/clone", upload.array("files", 20), async (req, res) => {
   const consent = String(req.body.consent || "") === "true";
   const name = String(req.body.name || "").trim();
   const description = String(req.body.description || "").trim();
@@ -306,22 +341,26 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
         })),
       });
 
+      const now = new Date().toISOString();
       const voice: VoiceRecord = {
         id: result.voiceId,
         name,
         description: description || undefined,
         sampleCount: files.length,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
+        lastTrainedAt: now,
         demo: false,
         engine: "elevenlabs-ivc",
         provider: "elevenlabs",
       };
       store.upsertVoice(voice);
+      saveUploadedSamples(voice.id, files, "clone");
 
       return res.json({
         voice,
-        message:
-          "Voz clonada e salva na biblioteca. Use a aba Vozes e Criações para gerar e guardar áudios.",
+        samples: store.listSamples(voice.id),
+        message: `Perfil “${name}” criado. Abra na Biblioteca para ir adicionando áudios e treinando.`,
       });
     }
 
@@ -359,6 +398,7 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
       });
     }
     const rawVoice = data.voice as Record<string, unknown>;
+    const now = new Date().toISOString();
     const voice: VoiceRecord = {
       id: String(rawVoice.id),
       name: String(rawVoice.name),
@@ -368,17 +408,19 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
       sampleCount: Number(
         rawVoice.sample_count ?? rawVoice.sampleCount ?? files.length
       ),
-      createdAt: String(
-        rawVoice.created_at ?? rawVoice.createdAt ?? new Date().toISOString()
-      ),
+      createdAt: String(rawVoice.created_at ?? rawVoice.createdAt ?? now),
+      updatedAt: now,
+      lastTrainedAt: now,
       demo: Boolean(rawVoice.demo),
       engine: String(rawVoice.engine || "agencyvoice-xtts-v2"),
       provider: "local",
     };
     store.upsertVoice(voice);
+    saveUploadedSamples(voice.id, files, "clone");
     return res.json({
       voice,
-      message: data.message || "Voz clonada e salva na biblioteca.",
+      samples: store.listSamples(voice.id),
+      message: data.message || `Perfil “${name}” criado na Biblioteca.`,
     });
   } catch (err) {
     console.error(err);
@@ -386,6 +428,130 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
       error: err instanceof Error ? err.message : "Falha ao clonar voz.",
     });
   }
+});
+
+/** Alimenta o perfil com mais áudios e atualiza o clone (treinar). */
+app.post(
+  "/api/voices/:id/samples",
+  upload.array("files", 20),
+  async (req, res) => {
+    const voice = store.getVoice(req.params.id);
+    if (!voice) {
+      return res.status(404).json({ error: "Perfil de voz não encontrado." });
+    }
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Envie pelo menos um áudio para treinar." });
+    }
+
+    const source =
+      String(req.body.source || "") === "record" ? "record" : "upload";
+
+    try {
+      const saved = saveUploadedSamples(voice.id, files, source);
+
+      if (voice.provider === "elevenlabs" && eleven) {
+        await addSamplesToVoice(eleven, {
+          voiceId: voice.id,
+          name: voice.name,
+          description: voice.description,
+          files: files.map((f) => ({
+            buffer: f.buffer,
+            filename: f.originalname || "sample.wav",
+          })),
+        });
+      } else if (voice.provider === "local" || voice.id.startsWith("av_")) {
+        const form = new FormData();
+        for (const f of files) {
+          form.append("files", f.buffer, {
+            filename: f.originalname || "sample.wav",
+            contentType: f.mimetype || "audio/wav",
+          });
+        }
+        const r = await aiFetch(`/voices/${encodeURIComponent(voice.id)}/samples`, {
+          method: "POST",
+          headers: form.getHeaders(),
+          body: form as unknown as NodeJS.ReadableStream,
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          let detail: unknown = errText;
+          try {
+            detail = JSON.parse(errText);
+          } catch {
+            /* keep */
+          }
+          return res.status(r.status).json({
+            error: "Falha ao atualizar o perfil local com novas amostras.",
+            detail,
+          });
+        }
+      } else if (eleven) {
+        // voz remota sem provider marcado — tenta ElevenLabs
+        await addSamplesToVoice(eleven, {
+          voiceId: voice.id,
+          name: voice.name,
+          description: voice.description,
+          files: files.map((f) => ({
+            buffer: f.buffer,
+            filename: f.originalname || "sample.wav",
+          })),
+        });
+      }
+
+      const updated = store.markTrained(voice.id);
+      return res.json({
+        voice: updated || store.getVoice(voice.id),
+        samples: store.listSamples(voice.id),
+        added: saved,
+        message: `${saved.length} áudio(s) adicionados. A voz de ${voice.name} foi atualizada — continue alimentando para ficar melhor.`,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(503).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : "Falha ao treinar com novas amostras.",
+      });
+    }
+  }
+);
+
+app.get("/api/voices/:id/samples", (req, res) => {
+  const voice = store.getVoice(req.params.id);
+  if (!voice) {
+    return res.status(404).json({ error: "Perfil de voz não encontrado." });
+  }
+  return res.json({ samples: store.listSamples(voice.id) });
+});
+
+app.get("/api/voices/:id/samples/:sampleId/audio", (req, res) => {
+  const sample = store.getSample(req.params.id, req.params.sampleId);
+  if (!sample) {
+    return res.status(404).json({ error: "Amostra não encontrada." });
+  }
+  const file = store.sampleFilePath(sample);
+  if (!fs.existsSync(file)) {
+    return res.status(404).json({ error: "Arquivo de áudio ausente." });
+  }
+  res.setHeader("Content-Type", sample.mimeType);
+  return res.sendFile(file);
+});
+
+app.delete("/api/voices/:id/samples/:sampleId", (req, res) => {
+  const voice = store.getVoice(req.params.id);
+  if (!voice) {
+    return res.status(404).json({ error: "Perfil de voz não encontrado." });
+  }
+  store.deleteSample(voice.id, req.params.sampleId);
+  return res.json({
+    ok: true,
+    samples: store.listSamples(voice.id),
+    voice: store.getVoice(voice.id),
+  });
 });
 
 app.post("/api/tts", async (req, res) => {
@@ -415,9 +581,8 @@ app.post("/api/tts", async (req, res) => {
     }
 
     const originalText = text.trim();
-    const spokenText = store.applyPronunciations(originalText);
-    const storedVoice =
-      store.listVoices().find((v) => v.id === voiceId) || null;
+    const spokenText = store.applyPronunciations(originalText, voiceId);
+    const storedVoice = store.getVoice(voiceId);
 
     const useEleven =
       Boolean(eleven) &&
@@ -487,9 +652,6 @@ app.post("/api/tts", async (req, res) => {
     res.setHeader("Content-Type", mimeType);
     res.setHeader("Content-Length", buffer.length);
     if (creationId) res.setHeader("X-Creation-Id", creationId);
-    if (spokenText !== originalText) {
-      res.setHeader("X-Text-Spoken", encodeURIComponent(spokenText));
-    }
     return res.send(buffer);
   } catch (err) {
     console.error(err);
@@ -501,7 +663,7 @@ app.post("/api/tts", async (req, res) => {
 
 app.delete("/api/voices/:id", async (req, res) => {
   const id = req.params.id;
-  const stored = store.listVoices().find((v) => v.id === id);
+  const stored = store.getVoice(id);
 
   if ((stored?.provider === "elevenlabs" || !id.startsWith("av_")) && eleven) {
     try {
@@ -518,7 +680,7 @@ app.delete("/api/voices/:id", async (req, res) => {
       method: "DELETE",
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
+    if (!r.ok && !stored) {
       return res.status(r.status).json({
         error: (data as { detail?: string }).detail || "Falha ao remover voz.",
       });
@@ -534,8 +696,9 @@ app.delete("/api/voices/:id", async (req, res) => {
   }
 });
 
-app.get("/api/creations", (_req, res) => {
-  return res.json({ creations: store.listCreations() });
+app.get("/api/creations", (req, res) => {
+  const voiceId = req.query.voiceId ? String(req.query.voiceId) : undefined;
+  return res.json({ creations: store.listCreations(voiceId) });
 });
 
 app.get("/api/creations/:id/audio", (req, res) => {
@@ -560,21 +723,29 @@ app.delete("/api/creations/:id", (req, res) => {
   return res.json({ ok: true });
 });
 
-app.get("/api/pronunciations", (_req, res) => {
-  return res.json({ pronunciations: store.listPronunciations() });
+app.get("/api/pronunciations", (req, res) => {
+  const voiceId =
+    req.query.voiceId !== undefined ? String(req.query.voiceId) : undefined;
+  return res.json({
+    pronunciations: store.listPronunciations(
+      voiceId === "" ? null : voiceId
+    ),
+  });
 });
 
 app.post("/api/pronunciations", (req, res) => {
   try {
-    const { word, alias, note } = req.body as {
+    const { word, alias, note, voiceId } = req.body as {
       word?: string;
       alias?: string;
       note?: string;
+      voiceId?: string;
     };
     const rule = store.upsertPronunciation(
       String(word || ""),
       String(alias || ""),
-      note ? String(note) : undefined
+      note ? String(note) : undefined,
+      voiceId ? String(voiceId) : undefined
     );
     return res.json({ pronunciation: rule });
   } catch (err) {
@@ -590,10 +761,11 @@ app.delete("/api/pronunciations/:id", (req, res) => {
 });
 
 app.post("/api/pronunciations/preview", (req, res) => {
-  const text = String((req.body as { text?: string }).text || "");
+  const body = req.body as { text?: string; voiceId?: string };
+  const text = String(body.text || "");
   return res.json({
     original: text,
-    spoken: store.applyPronunciations(text),
+    spoken: store.applyPronunciations(text, body.voiceId),
   });
 });
 
@@ -609,7 +781,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`AgencyVoice gateway em http://0.0.0.0:${PORT}`);
   console.log(`Provedor ativo: ${provider}`);
   if (provider === "local") console.log(`IA local: ${AI_URL}`);
-  if (hasEleven) console.log("ElevenLabs SDK (@elevenlabs/elevenlabs-js) pronto");
+  if (hasEleven) console.log("ElevenLabs SDK pronto");
   else if (looksLikeKeyId)
     console.log("Atenção: ELEVENLABS_API_KEY parece ser Key ID, não sk_…");
 });

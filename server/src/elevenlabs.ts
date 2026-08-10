@@ -95,3 +95,27 @@ export async function listElevenVoices(client: ElevenLabsClient) {
   const page = await client.voices.search({ pageSize: 100 });
   return page.voices || [];
 }
+
+/** Adiciona amostras a uma voz IVC existente (treinar / melhorar). */
+export async function addSamplesToVoice(
+  client: ElevenLabsClient,
+  params: {
+    voiceId: string;
+    name: string;
+    description?: string;
+    files: Array<{ buffer: Buffer; filename: string }>;
+  }
+) {
+  const files = params.files.map((f) => {
+    const stream = Readable.from(f.buffer);
+    (stream as Readable & { path?: string }).path = f.filename;
+    return stream;
+  });
+
+  return client.voices.update(params.voiceId, {
+    name: params.name,
+    description: params.description || undefined,
+    files,
+    removeBackgroundNoise: true,
+  });
+}

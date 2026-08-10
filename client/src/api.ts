@@ -4,9 +4,22 @@ export type VoiceRecord = {
   description?: string;
   sampleCount: number;
   createdAt: string;
+  updatedAt?: string;
+  lastTrainedAt?: string;
   demo: boolean;
   engine?: string;
   provider?: "elevenlabs" | "local";
+};
+
+export type VoiceSampleRecord = {
+  id: string;
+  voiceId: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  source: "record" | "upload" | "clone";
+  size: number;
+  createdAt: string;
 };
 
 export type CreationRecord = {
@@ -27,6 +40,7 @@ export type PronunciationRule = {
   word: string;
   alias: string;
   note?: string;
+  voiceId?: string;
   createdAt: string;
 };
 
@@ -58,6 +72,8 @@ function mapVoice(v: Record<string, unknown>): VoiceRecord {
     description: v.description ? String(v.description) : undefined,
     sampleCount: Number(v.sampleCount ?? v.sample_count ?? 0),
     createdAt: String(v.createdAt ?? v.created_at ?? ""),
+    updatedAt: v.updatedAt ? String(v.updatedAt) : undefined,
+    lastTrainedAt: v.lastTrainedAt ? String(v.lastTrainedAt) : undefined,
     demo: Boolean(v.demo),
     engine: v.engine ? String(v.engine) : undefined,
     provider:
@@ -76,6 +92,24 @@ export async function listVoices(): Promise<VoiceRecord[]> {
   const res = await fetch("/api/voices");
   const data = await parseJson<{ voices: Array<Record<string, unknown>> }>(res);
   return data.voices.map(mapVoice);
+}
+
+export async function getVoiceProfile(id: string): Promise<{
+  voice: VoiceRecord;
+  samples: VoiceSampleRecord[];
+  creations: CreationRecord[];
+}> {
+  const res = await fetch(`/api/voices/${id}`);
+  const data = await parseJson<{
+    voice: Record<string, unknown>;
+    samples: VoiceSampleRecord[];
+    creations: CreationRecord[];
+  }>(res);
+  return {
+    voice: mapVoice(data.voice),
+    samples: data.samples || [],
+    creations: data.creations || [],
+  };
 }
 
 export async function cloneVoice(params: {
@@ -106,9 +140,49 @@ export async function cloneVoice(params: {
   };
 }
 
+export async function trainVoice(params: {
+  voiceId: string;
+  files: File[];
+  source?: "record" | "upload";
+}): Promise<{ voice: VoiceRecord; samples: VoiceSampleRecord[]; message: string }> {
+  const form = new FormData();
+  form.append("source", params.source || "upload");
+  for (const file of params.files) {
+    form.append("files", file, file.name);
+  }
+  const res = await fetch(`/api/voices/${params.voiceId}/samples`, {
+    method: "POST",
+    body: form,
+  });
+  const data = await parseJson<{
+    voice: Record<string, unknown>;
+    samples: VoiceSampleRecord[];
+    message: string;
+  }>(res);
+  return {
+    message: data.message,
+    voice: mapVoice(data.voice),
+    samples: data.samples || [],
+  };
+}
+
 export async function deleteVoice(id: string): Promise<void> {
   const res = await fetch(`/api/voices/${id}`, { method: "DELETE" });
   await parseJson(res);
+}
+
+export async function deleteSample(
+  voiceId: string,
+  sampleId: string
+): Promise<void> {
+  const res = await fetch(`/api/voices/${voiceId}/samples/${sampleId}`, {
+    method: "DELETE",
+  });
+  await parseJson(res);
+}
+
+export function sampleAudioUrl(voiceId: string, sampleId: string): string {
+  return `/api/voices/${voiceId}/samples/${sampleId}/audio`;
 }
 
 export async function generateSpeech(params: {
@@ -138,7 +212,7 @@ export async function generateSpeech(params: {
     return parseJson(res);
   }
   if (!res.ok) {
-    throw new Error("Falha ao gerar áudio na AgencyVoice AI.");
+    throw new Error("Falha ao gerar áudio.");
   }
   return {
     blob: await res.blob(),
@@ -146,8 +220,9 @@ export async function generateSpeech(params: {
   };
 }
 
-export async function listCreations(): Promise<CreationRecord[]> {
-  const res = await fetch("/api/creations");
+export async function listCreations(voiceId?: string): Promise<CreationRecord[]> {
+  const q = voiceId ? `?voiceId=${encodeURIComponent(voiceId)}` : "";
+  const res = await fetch(`/api/creations${q}`);
   const data = await parseJson<{ creations: CreationRecord[] }>(res);
   return data.creations;
 }
@@ -161,8 +236,14 @@ export async function deleteCreation(id: string): Promise<void> {
   await parseJson(res);
 }
 
-export async function listPronunciations(): Promise<PronunciationRule[]> {
-  const res = await fetch("/api/pronunciations");
+export async function listPronunciations(
+  voiceId?: string
+): Promise<PronunciationRule[]> {
+  const q =
+    voiceId !== undefined
+      ? `?voiceId=${encodeURIComponent(voiceId)}`
+      : "";
+  const res = await fetch(`/api/pronunciations${q}`);
   const data = await parseJson<{ pronunciations: PronunciationRule[] }>(res);
   return data.pronunciations;
 }
@@ -171,6 +252,7 @@ export async function savePronunciation(params: {
   word: string;
   alias: string;
   note?: string;
+  voiceId?: string;
 }): Promise<PronunciationRule> {
   const res = await fetch("/api/pronunciations", {
     method: "POST",
@@ -187,12 +269,13 @@ export async function deletePronunciation(id: string): Promise<void> {
 }
 
 export async function previewPronunciation(
-  text: string
+  text: string,
+  voiceId?: string
 ): Promise<{ original: string; spoken: string }> {
   const res = await fetch("/api/pronunciations/preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, voiceId }),
   });
   return parseJson(res);
 }
