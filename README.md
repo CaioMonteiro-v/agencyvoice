@@ -41,24 +41,27 @@ cp .env.example .env
 
 **Nunca commit a API key.** O arquivo `.env` já está no `.gitignore`.
 
-## Setup
+## Setup local
 
 ```bash
-# Node
 npm run install:all
-
-# Python + modelo (CPU; use GPU se disponível)
-npm run setup:ai
-
+npm run setup:ai   # só se for usar motor local
 cp .env.example .env
+# ELEVENLABS_API_KEY=sk_...
 npm run dev
 ```
 
 - App: http://localhost:5173  
 - Gateway: http://localhost:3001  
-- IA: http://localhost:8000/health  
 
-Na primeira síntese o modelo XTTS (~2GB) é baixado automaticamente.
+## Deploy no Render
+
+1. Merge/push desta branch no GitHub  
+2. Em [Render → New → Blueprint](https://dashboard.render.com/select-repo?type=blueprint), conecte o repo `agencyvoice`  
+3. No serviço, defina o secret **`ELEVENLABS_API_KEY`** com a chave `sk_…` (não o Key ID)  
+4. Deploy usa `render.yaml` → build do frontend + `npm run start:web`
+
+A API key **nunca** vai no código nem no Git — só em `.env` local ou Environment Variables do Render.
 
 ## Hardware
 

@@ -32,15 +32,17 @@ const PORT = Number(process.env.PORT) || 3001;
 const ELEVEN_KEY = (process.env.ELEVENLABS_API_KEY || "").trim();
 const PROVIDER_CFG = (process.env.VOICE_PROVIDER || "auto").toLowerCase();
 
-const hasEleven =
-  ELEVEN_KEY.length > 20 &&
-  ELEVEN_KEY !== "sua_chave_aqui" &&
-  ELEVEN_KEY.startsWith("sk_");
-
 const looksLikeKeyId =
   Boolean(ELEVEN_KEY) &&
   !ELEVEN_KEY.startsWith("sk_") &&
   /^[a-f0-9]{40,80}$/i.test(ELEVEN_KEY);
+
+/** Aceita sk_…; se for só hex (Key ID), marca como inválida. */
+const hasEleven =
+  ELEVEN_KEY.length > 20 &&
+  ELEVEN_KEY !== "sua_chave_aqui" &&
+  ELEVEN_KEY.startsWith("sk_") &&
+  !looksLikeKeyId;
 
 function resolveProvider(): "elevenlabs" | "local" {
   if (PROVIDER_CFG === "elevenlabs") {
@@ -445,9 +447,9 @@ if (fs.existsSync(clientDist)) {
   });
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   const provider = resolveProvider();
-  console.log(`AgencyVoice gateway em http://localhost:${PORT}`);
+  console.log(`AgencyVoice gateway em http://0.0.0.0:${PORT}`);
   console.log(`Provedor ativo: ${provider}`);
   if (provider === "local") console.log(`IA local: ${AI_URL}`);
   if (hasEleven) console.log("ElevenLabs SDK (@elevenlabs/elevenlabs-js) pronto");
