@@ -1,0 +1,140 @@
+import { useEffect, useRef, useState } from "react";
+
+export type Sample = {
+  id: string;
+  file: File;
+  url: string;
+  durationLabel: string;
+  source: "record" | "upload";
+};
+
+function formatDuration(seconds: number) {
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+export function useAudioRecorder() {
+  const [recording, setRecording] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [samples, setSamples] = useState<Sample[]>([]);
+
+  const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const timer = useRef<number | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const startedAt = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      if (timer.current) window.clearInterval(timer.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      samples.forEach((s) => URL.revokeObjectURL(s.url));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addFiles = (files: FileList | File[]) => {
+    const list = Array.from(files).filter((f) => f.type.startsWith("audio/") || /\.(webm|wav|mp3|m4a|ogg|flac)$/i.test(f.name));
+    if (list.length === 0) {
+      setError("Selecione arquivos de áudio válidos.");
+      return;
+    }
+    setError(null);
+    const next: Sample[] = list.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      url: URL.createObjectURL(file),
+      durationLabel: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+      source: "upload" as const,
+    }));
+    setSamples((prev) => [...prev, ...next]);
+  };
+
+  const removeSample = (id: string) => {
+    setSamples((prev) => {
+      const target = prev.find((s) => s.id === id);
+      if (target) URL.revokeObjectURL(target.url);
+      return prev.filter((s) => s.id !== id);
+    });
+  };
+
+  const clearSamples = () => {
+    setSamples((prev) => {
+      prev.forEach((s) => URL.revokeObjectURL(s.url));
+      return [];
+    });
+  };
+
+  const start = async () => {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType: mime });
+      chunks.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunks.current, { type: mime });
+        const seconds = Math.max(1, Math.round((Date.now() - startedAt.current) / 1000));
+        const file = new File([blob], `gravacao-${Date.now()}.webm`, {
+          type: mime,
+        });
+        const sample: Sample = {
+          id: crypto.randomUUID(),
+          file,
+          url: URL.createObjectURL(blob),
+          durationLabel: formatDuration(seconds),
+          source: "record",
+        };
+        setSamples((prev) => [...prev, sample]);
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      };
+      mediaRecorder.current = recorder;
+      startedAt.current = Date.now();
+      setElapsed(0);
+      recorder.start(200);
+      setRecording(true);
+      timer.current = window.setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startedAt.current) / 1000));
+      }, 250);
+    } catch {
+      setError(
+        "Não foi possível acessar o microfone. Permita o acesso ou envie um arquivo."
+      );
+    }
+  };
+
+  const stop = () => {
+    if (timer.current) {
+      window.clearInterval(timer.current);
+      timer.current = null;
+    }
+    mediaRecorder.current?.stop();
+    setRecording(false);
+  };
+
+  return {
+    recording,
+    elapsed: formatDuration(elapsed),
+    error,
+    samples,
+    start,
+    stop,
+    addFiles,
+    removeSample,
+    clearSamples,
+    setError,
+  };
+}
