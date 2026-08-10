@@ -1,7 +1,12 @@
 node_modules/
 dist/
+voices/*
+!voices/.gitkeep
 uploads/*
 !uploads/.gitkeep
+uploads/generated/
+ai/.venv/
+ai/models/
 .env
 .env.local
 *.log
@@ -11,4 +16,6 @@ server/dist/
 *.webm
 *.wav
 *.mp3
+*.pth
+*.pt
 !client/public/**

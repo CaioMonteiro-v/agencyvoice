@@ -40,10 +40,10 @@ function Landing({ onStart }: { onStart: () => void }) {
         <h1 className="hero-brand">
           Agency<span>Voice</span>
         </h1>
-        <h2>A voz do candidato, pronta sob demanda.</h2>
+        <h2>Nossa IA. A voz do seu candidato.</h2>
         <p>
-          Capture áudio, clone a voz com IA e gere spots, vídeos e mensagens
-          com o timbre do seu candidato — em minutos.
+          AgencyVoice é uma IA própria de clonagem de voz: capture o áudio,
+          treine o perfil vocal e gere spots de campanha sob demanda.
         </p>
         <div className="hero-cta">
           <button className="btn btn-primary" type="button" onClick={onStart}>
@@ -70,8 +70,8 @@ function Landing({ onStart }: { onStart: () => void }) {
         <div className="section-head">
           <h3>Três passos. Uma voz de campanha.</h3>
           <p>
-            Fluxo inspirado em plataformas como ElevenLabs: amostra limpa,
-            clone instantâneo e geração de fala a partir de texto.
+            Mesma experiência das plataformas de voice cloning — com motor
+            próprio rodando na AgencyVoice AI (XTTS, português nativo).
           </p>
         </div>
         <div className="steps">
@@ -134,8 +134,11 @@ function MicIcon({ recording }: { recording: boolean }) {
 
 function Studio({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState<Step>(0);
-  const [mode, setMode] = useState<"live" | "demo">("demo");
+  const [mode, setMode] = useState<"live" | "booting" | "offline" | "demo">(
+    "booting"
+  );
   const [modeMsg, setModeMsg] = useState("");
+  const [device, setDevice] = useState<string>("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [consent, setConsent] = useState(false);
@@ -160,10 +163,11 @@ function Studio({ onBack }: { onBack: () => void }) {
       .then((h) => {
         setMode(h.mode);
         setModeMsg(h.message);
+        setDevice(h.device || "");
       })
       .catch(() => {
-        setMode("demo");
-        setModeMsg("Servidor indisponível — inicie o backend.");
+        setMode("offline");
+        setModeMsg("AgencyVoice AI offline — rode npm run dev.");
       });
     listVoices()
       .then((v) => {
@@ -231,27 +235,17 @@ function Studio({ onBack }: { onBack: () => void }) {
       if (result.blob) {
         const url = URL.createObjectURL(result.blob);
         setAudioUrl(url);
-        setAlert({ type: "ok", text: "Áudio gerado com a voz clonada." });
+        setAlert({
+          type: "ok",
+          text: "Áudio gerado pela AgencyVoice AI com a voz clonada.",
+        });
         return;
       }
 
-      // Demo fallback: Web Speech API
       setAlert({
-        type: "info",
-        text:
-          result.message ||
-          "Modo demonstração: reproduzindo com a voz do navegador. Configure ELEVENLABS_API_KEY para áudio real.",
+        type: "error",
+        text: result.message || "A IA não retornou áudio. Verifique o motor.",
       });
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(result.text || script);
-        utter.lang = "pt-BR";
-        const voicesPt = window.speechSynthesis
-          .getVoices()
-          .filter((v) => v.lang.toLowerCase().startsWith("pt"));
-        if (voicesPt[0]) utter.voice = voicesPt[0];
-        window.speechSynthesis.speak(utter);
-      }
     } catch (err) {
       setAlert({
         type: "error",
@@ -284,7 +278,11 @@ function Studio({ onBack }: { onBack: () => void }) {
         <div className="topbar-actions">
           <span className={`mode-pill ${mode === "live" ? "live" : ""}`}>
             <span className="dot" />
-            {mode === "live" ? "ElevenLabs conectado" : "Modo demonstração"}
+            {mode === "live"
+              ? `AgencyVoice AI · ${device || "pronta"}`
+              : mode === "booting"
+                ? "Carregando modelo…"
+                : "IA offline"}
           </span>
           <button className="btn btn-ghost" type="button" onClick={onBack}>
             Início
@@ -293,7 +291,10 @@ function Studio({ onBack }: { onBack: () => void }) {
       </header>
 
       {modeMsg && (
-        <div className={`alert ${mode === "live" ? "ok" : "info"}`} style={{ marginBottom: "1rem" }}>
+        <div
+          className={`alert ${mode === "live" ? "ok" : mode === "offline" ? "error" : "info"}`}
+          style={{ marginBottom: "1rem" }}
+        >
           {modeMsg}
         </div>
       )}
@@ -436,9 +437,9 @@ function Studio({ onBack }: { onBack: () => void }) {
         <section className="panel">
           <h2>Clonar a voz</h2>
           <p className="lead">
-            Dê um nome ao modelo vocal e confirme a autorização. Usamos a API
-            Instant Voice Cloning da ElevenLabs quando a chave estiver
-            configurada.
+            Dê um nome ao perfil vocal e confirme a autorização. A AgencyVoice
+            AI cria o clone a partir das suas amostras — sem enviar áudio para
+            APIs de terceiros.
           </p>
           <div className="grid-2">
             <div>
@@ -512,7 +513,7 @@ function Studio({ onBack }: { onBack: () => void }) {
                       <div>
                         <strong>{v.name}</strong>
                         <span>
-                          {v.demo ? "Demo" : "Live"} · {v.sampleCount} amostra(s)
+                          {v.engine || "AgencyVoice AI"} · {v.sampleCount} amostra(s)
                         </span>
                       </div>
                       <button
@@ -566,7 +567,7 @@ function Studio({ onBack }: { onBack: () => void }) {
                       >
                         <div>
                           <strong>{v.name}</strong>
-                          <span>{v.demo ? "Demonstração" : "ElevenLabs"}</span>
+                          <span>{v.engine || "AgencyVoice AI"}</span>
                         </div>
                       </button>
                     ))}
@@ -635,8 +636,8 @@ function Studio({ onBack }: { onBack: () => void }) {
                   <strong>Resultado</strong>
                   <audio src={audioUrl} controls autoPlay />
                   <div className="actions" style={{ marginTop: "0.75rem" }}>
-                    <a className="btn btn-ghost" href={audioUrl} download="agencyvoice.mp3">
-                      Baixar MP3
+                    <a className="btn btn-ghost" href={audioUrl} download="agencyvoice.wav">
+                      Baixar WAV
                     </a>
                   </div>
                 </div>
@@ -654,13 +655,16 @@ function Studio({ onBack }: { onBack: () => void }) {
                 Dicas de campanha
               </h3>
               <p className="empty" style={{ marginBottom: "0.75rem" }}>
-                Use frases curtas e naturais. Evite siglas difíceis de pronunciar.
-                Para qualidade profissional, grave 30+ minutos e use Professional
-                Voice Cloning na conta ElevenLabs.
+                Use frases curtas e naturais. Ideal: 1–5 min de áudio limpo para
+                clone rápido; mais amostras = timbre mais fiel.
               </p>
               <p className="empty">
-                Modelo atual: <strong style={{ color: "var(--foam)" }}>eleven_multilingual_v2</strong>{" "}
-                (português suportado).
+                Motor:{" "}
+                <strong style={{ color: "var(--foam)" }}>
+                  agencyvoice-xtts-v2
+                </strong>{" "}
+                · português nativo · roda na sua infra
+                {device ? ` (${device})` : ""}.
               </p>
             </div>
           </div>

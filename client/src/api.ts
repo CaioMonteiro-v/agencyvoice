@@ -5,20 +5,25 @@ export type VoiceRecord = {
   sampleCount: number;
   createdAt: string;
   demo: boolean;
-  elevenLabsVoiceId?: string;
+  engine?: string;
 };
 
 export type HealthResponse = {
   ok: boolean;
-  mode: "live" | "demo";
+  mode: "live" | "booting" | "offline" | "demo";
   message: string;
+  engine?: string;
+  device?: string;
 };
 
 async function parseJson<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = (data as { error?: string }).error || res.statusText;
-    throw new Error(err);
+    const err =
+      (data as { error?: string; detail?: string }).error ||
+      (data as { detail?: string }).detail ||
+      res.statusText;
+    throw new Error(typeof err === "string" ? err : JSON.stringify(err));
   }
   return data as T;
 }
@@ -30,8 +35,16 @@ export async function getHealth(): Promise<HealthResponse> {
 
 export async function listVoices(): Promise<VoiceRecord[]> {
   const res = await fetch("/api/voices");
-  const data = await parseJson<{ voices: VoiceRecord[] }>(res);
-  return data.voices;
+  const data = await parseJson<{ voices: Array<Record<string, unknown>> }>(res);
+  return data.voices.map((v) => ({
+    id: String(v.id),
+    name: String(v.name),
+    description: v.description ? String(v.description) : undefined,
+    sampleCount: Number(v.sampleCount ?? v.sample_count ?? 0),
+    createdAt: String(v.createdAt ?? v.created_at ?? ""),
+    demo: Boolean(v.demo),
+    engine: v.engine ? String(v.engine) : undefined,
+  }));
 }
 
 export async function cloneVoice(params: {
@@ -44,6 +57,7 @@ export async function cloneVoice(params: {
   form.append("name", params.name);
   form.append("description", params.description);
   form.append("consent", String(params.consent));
+  form.append("language", "pt");
   for (const file of params.files) {
     form.append("files", file, file.name);
   }
@@ -51,7 +65,26 @@ export async function cloneVoice(params: {
     method: "POST",
     body: form,
   });
-  return parseJson(res);
+  const data = await parseJson<{
+    voice: Record<string, unknown>;
+    message: string;
+  }>(res);
+  return {
+    message: data.message,
+    voice: {
+      id: String(data.voice.id),
+      name: String(data.voice.name),
+      description: data.voice.description
+        ? String(data.voice.description)
+        : undefined,
+      sampleCount: Number(
+        data.voice.sampleCount ?? data.voice.sample_count ?? 0
+      ),
+      createdAt: String(data.voice.createdAt ?? data.voice.created_at ?? ""),
+      demo: Boolean(data.voice.demo),
+      engine: data.voice.engine ? String(data.voice.engine) : undefined,
+    },
+  };
 }
 
 export async function deleteVoice(id: string): Promise<void> {
@@ -64,17 +97,17 @@ export async function generateSpeech(params: {
   text: string;
   stability: number;
   similarityBoost: number;
-}): Promise<{
-  blob?: Blob;
-  demo?: boolean;
-  text?: string;
-  voiceName?: string;
-  message?: string;
-}> {
+}): Promise<{ blob?: Blob; message?: string }> {
   const res = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      voiceId: params.voiceId,
+      text: params.text,
+      language: "pt",
+      stability: params.stability,
+      similarityBoost: params.similarityBoost,
+    }),
   });
 
   const contentType = res.headers.get("content-type") || "";
@@ -82,7 +115,7 @@ export async function generateSpeech(params: {
     return parseJson(res);
   }
   if (!res.ok) {
-    throw new Error("Falha ao gerar áudio.");
+    throw new Error("Falha ao gerar áudio na AgencyVoice AI.");
   }
   return { blob: await res.blob() };
 }

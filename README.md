@@ -1,51 +1,57 @@
-# AgencyVoice
+# AgencyVoice AI
 
-Clonagem de voz para campanhas — capture o áudio do candidato, treine um clone com IA e gere spots a partir de texto.
+IA própria de clonagem de voz para campanhas. A ElevenLabs serviu só de **referência de produto** — a inferência roda no nosso motor (XTTS-v2), com português nativo.
 
-Inspirado no fluxo da [ElevenLabs Voice Cloning](https://elevenlabs.io/voice-cloning): gravação/upload → clone instantâneo → texto para fala.
+## Arquitetura
 
-## O que faz
+```
+Browser (React)
+    → Gateway Node (:3001)
+        → AgencyVoice AI / Python FastAPI (:8000)
+            → XTTS-v2 (clone zero-shot + síntese)
+            → perfis em /voices/<id>/
+```
 
-1. **Captura** — grava pelo microfone ou envia arquivos de áudio
-2. **Clona** — cria um modelo vocal via Instant Voice Cloning (ElevenLabs)
-3. **Gera** — transforma roteiros em áudio com a voz do candidato
-
-Sem chave de API, o app roda em **modo demonstração** (clone simulado + síntese do navegador).
-
-## Requisitos
-
-- Node.js 20+
-- Conta e API key da [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) (para clonagem real)
+1. **Captura** — microfone ou upload  
+2. **Clone** — cria perfil vocal com as amostras do candidato  
+3. **Gera** — texto → fala com o timbre clonado  
 
 ## Setup
 
 ```bash
-cp .env.example .env
-# Edite .env e cole sua ELEVENLABS_API_KEY
-
+# Node
 npm run install:all
+
+# Python + modelo (CPU; use GPU se disponível)
+npm run setup:ai
+
+cp .env.example .env
 npm run dev
 ```
 
 - App: http://localhost:5173  
-- API: http://localhost:3001  
+- Gateway: http://localhost:3001  
+- IA: http://localhost:8000/health  
 
-## Produção
+Na primeira síntese o modelo XTTS (~2GB) é baixado automaticamente.
 
-```bash
-npm run build
-# Defina ELEVENLABS_API_KEY e PORT
-npm start
-```
+## Hardware
 
-O servidor Express serve o frontend buildado e a API.
+| Ambiente | Expectativa |
+|----------|-------------|
+| GPU CUDA | Clone/síntese em segundos |
+| CPU | Funciona; frases curtas em poucos segundos após o modelo carregado |
+
+## Licença do modelo
+
+O backbone atual (**XTTS-v2**) usa a licença CPML da Coqui (não-comercial por padrão). Defina `COQUI_TOS_AGREED=1` para baixar. Para uso comercial em campanha, avalie licenciamento Coqui ou a troca do backbone do motor (`ai/voice_engine.py`) por um modelo com licença permissiva.
 
 ## Uso responsável
 
-Clone **apenas** vozes com autorização expressa do titular. Em campanhas, respeite a legislação eleitoral e os termos da ElevenLabs (Voice Captcha / verificação quando exigidos).
+Clone apenas vozes com autorização expressa do titular e respeite a legislação eleitoral.
 
 ## Stack
 
-- React + Vite (frontend)
-- Express + Multer (backend)
-- ElevenLabs API (`/v1/voices/add`, `/v1/text-to-speech`)
+- React + Vite  
+- Express (gateway)  
+- FastAPI + Coqui XTTS-v2 (motor AgencyVoice AI)
