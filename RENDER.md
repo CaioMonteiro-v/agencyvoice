@@ -21,9 +21,14 @@ A chave **não** precisa estar no Cursor nem no Git — só no painel do Render.
 
 ## 3. Deploy
 
-- Build: `npm run install:all && npm run build`  
-- Start: `npm run start:web`  
-- Health: `GET /api/health`
+Se o serviço for **Docker** (erro `open Dockerfile: no such file`):
+- Já existe `Dockerfile` na raiz — faça **Manual Deploy** de novo
+
+Se for **Native Node**:
+- Build: `npm run install:all && npm run build`
+- Start: `npm run start:web`
+
+Health: `GET /api/health`
 
 ## 4. Teste
 
