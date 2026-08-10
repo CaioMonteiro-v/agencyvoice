@@ -9,6 +9,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.62.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.21.2",
