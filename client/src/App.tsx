@@ -139,6 +139,7 @@ function Studio({ onBack }: { onBack: () => void }) {
   );
   const [modeMsg, setModeMsg] = useState("");
   const [device, setDevice] = useState<string>("");
+  const [provider, setProvider] = useState<"elevenlabs" | "local" | "">("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [consent, setConsent] = useState(false);
@@ -164,10 +165,11 @@ function Studio({ onBack }: { onBack: () => void }) {
         setMode(h.mode);
         setModeMsg(h.message);
         setDevice(h.device || "");
+        setProvider(h.provider || "");
       })
       .catch(() => {
         setMode("offline");
-        setModeMsg("AgencyVoice AI offline — rode npm run dev.");
+        setModeMsg("Gateway offline — rode npm run dev.");
       });
     listVoices()
       .then((v) => {
@@ -279,10 +281,12 @@ function Studio({ onBack }: { onBack: () => void }) {
           <span className={`mode-pill ${mode === "live" ? "live" : ""}`}>
             <span className="dot" />
             {mode === "live"
-              ? `AgencyVoice AI · ${device || "pronta"}`
+              ? provider === "elevenlabs"
+                ? "ElevenLabs conectado"
+                : `AgencyVoice AI · ${device || "pronta"}`
               : mode === "booting"
-                ? "Carregando modelo…"
-                : "IA offline"}
+                ? "Carregando…"
+                : "Offline"}
           </span>
           <button className="btn btn-ghost" type="button" onClick={onBack}>
             Início
@@ -437,9 +441,10 @@ function Studio({ onBack }: { onBack: () => void }) {
         <section className="panel">
           <h2>Clonar a voz</h2>
           <p className="lead">
-            Dê um nome ao perfil vocal e confirme a autorização. A AgencyVoice
-            AI cria o clone a partir das suas amostras — sem enviar áudio para
-            APIs de terceiros.
+            Dê um nome ao perfil vocal e confirme a autorização.
+            {provider === "elevenlabs"
+              ? " Clonagem via Instant Voice Cloning (ElevenLabs)."
+              : " A AgencyVoice AI cria o clone localmente."}
           </p>
           <div className="grid-2">
             <div>
@@ -636,8 +641,16 @@ function Studio({ onBack }: { onBack: () => void }) {
                   <strong>Resultado</strong>
                   <audio src={audioUrl} controls autoPlay />
                   <div className="actions" style={{ marginTop: "0.75rem" }}>
-                    <a className="btn btn-ghost" href={audioUrl} download="agencyvoice.wav">
-                      Baixar WAV
+                    <a
+                      className="btn btn-ghost"
+                      href={audioUrl}
+                      download={
+                        provider === "elevenlabs"
+                          ? "agencyvoice.mp3"
+                          : "agencyvoice.wav"
+                      }
+                    >
+                      Baixar áudio
                     </a>
                   </div>
                 </div>
@@ -661,9 +674,10 @@ function Studio({ onBack }: { onBack: () => void }) {
               <p className="empty">
                 Motor:{" "}
                 <strong style={{ color: "var(--foam)" }}>
-                  agencyvoice-xtts-v2
-                </strong>{" "}
-                · português nativo · roda na sua infra
+                  {provider === "elevenlabs"
+                    ? "elevenlabs · eleven_multilingual_v2"
+                    : "agencyvoice-xtts-v2"}
+                </strong>
                 {device ? ` (${device})` : ""}.
               </p>
             </div>

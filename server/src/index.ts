@@ -1,6 +1,7 @@
 /**
- * AgencyVoice gateway — sobe o frontend e encaminha /api para a IA Python.
- * A clonagem e a síntese rodam no motor AgencyVoice (XTTS), não em API externa.
+ * AgencyVoice gateway
+ * - VOICE_PROVIDER=auto|elevenlabs|local
+ * - auto: usa ElevenLabs se ELEVENLABS_API_KEY estiver definida; senão IA local
  */
 import dotenv from "dotenv";
 import express from "express";
@@ -20,6 +21,63 @@ const uploadsDir = path.join(rootDir, "uploads");
 const clientDist = path.join(rootDir, "client", "dist");
 const AI_URL = (process.env.AI_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const PORT = Number(process.env.PORT) || 3001;
+const ELEVEN_KEY = (process.env.ELEVENLABS_API_KEY || "").trim();
+const PROVIDER_CFG = (process.env.VOICE_PROVIDER || "auto").toLowerCase();
+
+const hasEleven =
+  ELEVEN_KEY.length > 20 &&
+  ELEVEN_KEY !== "sua_chave_aqui" &&
+  (ELEVEN_KEY.startsWith("sk_") || ELEVEN_KEY.includes("sk_"));
+
+/** Detecta ID de chave (hex) colado por engano em vez do secret sk_... */
+const looksLikeKeyId =
+  Boolean(ELEVEN_KEY) &&
+  !ELEVEN_KEY.startsWith("sk_") &&
+  /^[a-f0-9]{40,80}$/i.test(ELEVEN_KEY);
+
+function resolveProvider(): "elevenlabs" | "local" {
+  if (PROVIDER_CFG === "elevenlabs") {
+    return hasEleven ? "elevenlabs" : "local";
+  }
+  if (PROVIDER_CFG === "local") return "local";
+  return hasEleven ? "elevenlabs" : "local";
+}
+
+type VoiceRecord = {
+  id: string;
+  name: string;
+  description?: string;
+  sampleCount: number;
+  createdAt: string;
+  demo: boolean;
+  engine: string;
+  provider: "elevenlabs" | "local";
+};
+
+/** Vozes criadas via ElevenLabs nesta sessão (persistência leve em arquivo). */
+const elevenStorePath = path.join(rootDir, "voices", "elevenlabs-registry.json");
+const elevenVoices = new Map<string, VoiceRecord>();
+
+function loadElevenRegistry() {
+  try {
+    if (!fs.existsSync(elevenStorePath)) return;
+    const raw = JSON.parse(fs.readFileSync(elevenStorePath, "utf8")) as VoiceRecord[];
+    for (const v of raw) elevenVoices.set(v.id, v);
+  } catch {
+    /* ignore */
+  }
+}
+
+function saveElevenRegistry() {
+  fs.mkdirSync(path.dirname(elevenStorePath), { recursive: true });
+  fs.writeFileSync(
+    elevenStorePath,
+    JSON.stringify(Array.from(elevenVoices.values()), null, 2),
+    "utf8"
+  );
+}
+
+loadElevenRegistry();
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -44,51 +102,218 @@ const upload = multer({
   },
 });
 
-async function aiFetch(pathname: string, init?: fetch.RequestInit) {
+async function aiFetch(pathname: string, init?: Parameters<typeof fetch>[1]) {
   return fetch(`${AI_URL}${pathname}`, init);
 }
 
+async function elevenFetch(pathname: string, init: Parameters<typeof fetch>[1] = {}) {
+  const headers = {
+    "xi-api-key": ELEVEN_KEY,
+    ...(init.headers || {}),
+  };
+  return fetch(`https://api.elevenlabs.io${pathname}`, { ...init, headers });
+}
+
 app.get("/api/health", async (_req, res) => {
+  if (looksLikeKeyId) {
+    return res.json({
+      ok: true,
+      mode: "live",
+      provider: "local",
+      engine: "agencyvoice-xtts-v2",
+      message:
+        "Você colou o ID da chave ElevenLabs, não o secret. Em elevenlabs.io → Profile → API Keys, copie a chave que começa com sk_… Enquanto isso, usando AgencyVoice AI local.",
+    });
+  }
+
+  const provider = resolveProvider();
+
+  if (provider === "elevenlabs") {
+    try {
+      const r = await elevenFetch("/v1/user");
+      if (!r.ok) {
+        const detail = await r.text();
+        return res.status(r.status).json({
+          ok: false,
+          mode: "offline",
+          provider: "elevenlabs",
+          engine: "elevenlabs-ivc",
+          message: `ElevenLabs recusou a chave (${r.status}).`,
+          detail,
+        });
+      }
+      return res.json({
+        ok: true,
+        mode: "live",
+        provider: "elevenlabs",
+        engine: "elevenlabs-ivc",
+        device: "cloud",
+        message: "ElevenLabs conectado — clonagem Instant Voice Cloning ativa.",
+      });
+    } catch (err) {
+      return res.status(503).json({
+        ok: false,
+        mode: "offline",
+        provider: "elevenlabs",
+        engine: "elevenlabs-ivc",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Falha ao contatar ElevenLabs.",
+      });
+    }
+  }
+
   try {
     const r = await aiFetch("/health");
     const data = await r.json();
-    res.status(r.status).json({
+    return res.status(r.status).json({
       ok: Boolean(data.ok),
       mode: data.ready ? "live" : "booting",
+      provider: "local",
       engine: data.engine || "agencyvoice-xtts-v2",
       device: data.device,
       message: data.message || "AgencyVoice AI",
     });
   } catch {
-    res.status(503).json({
+    return res.status(503).json({
       ok: false,
       mode: "offline",
+      provider: "local",
       engine: "agencyvoice-xtts-v2",
       message:
-        "AgencyVoice AI offline — inicie o motor Python (`npm run dev:ai`).",
+        "AgencyVoice AI offline — inicie o motor Python (`npm run dev:ai`) ou configure ELEVENLABS_API_KEY.",
     });
   }
 });
 
 app.get("/api/voices", async (_req, res) => {
-  try {
-    const r = await aiFetch("/voices");
-    const data = await r.json();
-    res.status(r.status).json(data);
-  } catch {
-    res.status(503).json({ error: "IA offline", voices: [] });
+  const provider = resolveProvider();
+  const voices: VoiceRecord[] = [];
+
+  if (provider === "elevenlabs" || PROVIDER_CFG === "auto") {
+    voices.push(...Array.from(elevenVoices.values()));
   }
+
+  if (provider === "local" || PROVIDER_CFG === "auto") {
+    try {
+      const r = await aiFetch("/voices");
+      if (r.ok) {
+        const data = (await r.json()) as { voices: Array<Record<string, unknown>> };
+        for (const v of data.voices || []) {
+          voices.push({
+            id: String(v.id),
+            name: String(v.name),
+            description: v.description ? String(v.description) : undefined,
+            sampleCount: Number(v.sample_count ?? v.sampleCount ?? 0),
+            createdAt: String(v.created_at ?? v.createdAt ?? ""),
+            demo: Boolean(v.demo),
+            engine: String(v.engine || "agencyvoice-xtts-v2"),
+            provider: "local",
+          });
+        }
+      }
+    } catch {
+      /* local offline */
+    }
+  }
+
+  voices.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return res.json({ voices, provider: resolveProvider() });
 });
 
 app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
-  try {
-    const form = new FormData();
-    form.append("name", String(req.body.name || ""));
-    form.append("description", String(req.body.description || ""));
-    form.append("consent", String(req.body.consent || "false"));
-    form.append("language", String(req.body.language || "pt"));
+  const consent = String(req.body.consent || "") === "true";
+  const name = String(req.body.name || "").trim();
+  const description = String(req.body.description || "").trim();
+  const files = (req.files as Express.Multer.File[]) || [];
 
-    const files = (req.files as Express.Multer.File[]) || [];
+  if (!consent) {
+    return res.status(400).json({
+      error: "É necessário confirmar autorização legal para clonar esta voz.",
+    });
+  }
+  if (!name) {
+    return res.status(400).json({ error: "Informe o nome do candidato/voz." });
+  }
+  if (files.length === 0) {
+    return res.status(400).json({ error: "Envie pelo menos uma amostra de áudio." });
+  }
+
+  const provider = resolveProvider();
+
+  try {
+    if (provider === "elevenlabs") {
+      if (!hasEleven) {
+        return res.status(400).json({
+          error: "ELEVENLABS_API_KEY não configurada no .env",
+        });
+      }
+
+      const form = new FormData();
+      form.append("name", name);
+      if (description) form.append("description", description);
+      form.append("remove_background_noise", "true");
+      form.append(
+        "labels",
+        JSON.stringify({ language: "pt", use_case: "campaign", product: "agencyvoice" })
+      );
+      for (const f of files) {
+        form.append("files", f.buffer, {
+          filename: f.originalname || "sample.wav",
+          contentType: f.mimetype || "audio/wav",
+        });
+      }
+
+      const r = await elevenFetch("/v1/voices/add", {
+        method: "POST",
+        headers: form.getHeaders(),
+        body: form as unknown as NodeJS.ReadableStream,
+      });
+      const raw = await r.text();
+      let data: { voice_id?: string; detail?: unknown; message?: string } = {};
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { message: raw };
+      }
+
+      if (!r.ok) {
+        return res.status(r.status).json({
+          error:
+            (typeof data.detail === "string" && data.detail) ||
+            data.message ||
+            "Falha ao clonar na ElevenLabs.",
+          detail: data.detail,
+        });
+      }
+
+      const id = data.voice_id!;
+      const voice: VoiceRecord = {
+        id,
+        name,
+        description: description || undefined,
+        sampleCount: files.length,
+        createdAt: new Date().toISOString(),
+        demo: false,
+        engine: "elevenlabs-ivc",
+        provider: "elevenlabs",
+      };
+      elevenVoices.set(id, voice);
+      saveElevenRegistry();
+
+      return res.json({
+        voice,
+        message: "Voz clonada na ElevenLabs (Instant Voice Cloning).",
+      });
+    }
+
+    // Local AgencyVoice AI
+    const form = new FormData();
+    form.append("name", name);
+    form.append("description", description);
+    form.append("consent", "true");
+    form.append("language", String(req.body.language || "pt"));
     for (const f of files) {
       form.append("files", f.buffer, {
         filename: f.originalname || "sample.wav",
@@ -101,7 +326,6 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
       headers: form.getHeaders(),
       body: form as unknown as NodeJS.ReadableStream,
     });
-
     const raw = await r.text();
     let data: Record<string, unknown> = {};
     try {
@@ -109,7 +333,6 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
     } catch {
       data = { detail: raw };
     }
-
     if (!r.ok) {
       return res.status(r.status).json({
         error:
@@ -119,8 +342,6 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
         detail: data.detail,
       });
     }
-
-    // Normaliza shape para o frontend
     const voice = data.voice as Record<string, unknown>;
     return res.json({
       voice: {
@@ -130,7 +351,8 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
         sampleCount: voice.sample_count ?? voice.sampleCount,
         createdAt: voice.created_at ?? voice.createdAt,
         demo: Boolean(voice.demo),
-        engine: voice.engine,
+        engine: voice.engine || "agencyvoice-xtts-v2",
+        provider: "local",
       },
       message: data.message,
     });
@@ -138,26 +360,67 @@ app.post("/api/voices/clone", upload.array("files", 10), async (req, res) => {
     console.error(err);
     return res.status(503).json({
       error:
-        err instanceof Error
-          ? err.message
-          : "AgencyVoice AI indisponível para clonagem.",
+        err instanceof Error ? err.message : "Falha ao clonar voz.",
     });
   }
 });
 
 app.post("/api/tts", async (req, res) => {
   try {
-    const { voiceId, text, language = "pt", stability } = req.body as {
+    const {
+      voiceId,
+      text,
+      language = "pt",
+      stability = 0.5,
+      similarityBoost = 0.75,
+    } = req.body as {
       voiceId?: string;
       text?: string;
       language?: string;
       stability?: number;
+      similarityBoost?: number;
     };
 
     if (!voiceId || !text?.trim()) {
       return res
         .status(400)
         .json({ error: "Informe voiceId e o texto a ser falado." });
+    }
+
+    const elevenVoice = elevenVoices.get(voiceId);
+    const useEleven =
+      Boolean(elevenVoice) ||
+      (resolveProvider() === "elevenlabs" && !voiceId.startsWith("av_"));
+
+    if (useEleven && hasEleven) {
+      const r = await elevenFetch(`/v1/text-to-speech/${voiceId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text: text.trim(),
+          model_id: "eleven_multilingual_v2",
+          voice_settings: {
+            stability: Number(stability),
+            similarity_boost: Number(similarityBoost),
+          },
+        }),
+      });
+
+      if (!r.ok) {
+        const errText = await r.text();
+        return res.status(r.status).json({
+          error: "Falha ao gerar áudio na ElevenLabs.",
+          detail: errText,
+        });
+      }
+
+      const buffer = Buffer.from(await r.arrayBuffer());
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", buffer.length);
+      return res.send(buffer);
     }
 
     const r = await aiFetch("/tts", {
@@ -167,7 +430,8 @@ app.post("/api/tts", async (req, res) => {
         voiceId,
         text: text.trim(),
         language,
-        temperature: typeof stability === "number" ? 0.35 + stability * 0.5 : 0.7,
+        temperature:
+          typeof stability === "number" ? 0.35 + stability * 0.5 : 0.7,
       }),
     });
 
@@ -177,7 +441,7 @@ app.post("/api/tts", async (req, res) => {
       try {
         detail = JSON.parse(errText);
       } catch {
-        /* keep text */
+        /* keep */
       }
       return res.status(r.status).json({
         error: "Falha ao gerar áudio na AgencyVoice AI.",
@@ -192,17 +456,29 @@ app.post("/api/tts", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(503).json({
-      error:
-        err instanceof Error
-          ? err.message
-          : "AgencyVoice AI indisponível para síntese.",
+      error: err instanceof Error ? err.message : "Falha na síntese.",
     });
   }
 });
 
 app.delete("/api/voices/:id", async (req, res) => {
+  const id = req.params.id;
+
+  if (elevenVoices.has(id) && hasEleven) {
+    try {
+      await elevenFetch(`/v1/voices/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch (err) {
+      console.warn("Falha ao remover na ElevenLabs:", err);
+    }
+    elevenVoices.delete(id);
+    saveElevenRegistry();
+    return res.json({ ok: true });
+  }
+
   try {
-    const r = await aiFetch(`/voices/${encodeURIComponent(req.params.id)}`, {
+    const r = await aiFetch(`/voices/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
     const data = await r.json().catch(() => ({}));
@@ -213,7 +489,7 @@ app.delete("/api/voices/:id", async (req, res) => {
     }
     return res.json({ ok: true });
   } catch {
-    return res.status(503).json({ error: "AgencyVoice AI offline." });
+    return res.status(503).json({ error: "Provedor de voz offline." });
   }
 });
 
@@ -225,6 +501,9 @@ if (fs.existsSync(clientDist)) {
 }
 
 app.listen(PORT, () => {
+  const provider = resolveProvider();
   console.log(`AgencyVoice gateway em http://localhost:${PORT}`);
-  console.log(`IA alvo: ${AI_URL}`);
+  console.log(`Provedor ativo: ${provider}`);
+  if (provider === "local") console.log(`IA local: ${AI_URL}`);
+  if (hasEleven) console.log("ElevenLabs API key detectada");
 });

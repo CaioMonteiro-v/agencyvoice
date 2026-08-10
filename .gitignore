@@ -2,11 +2,15 @@ node_modules/
 dist/
 voices/*
 !voices/.gitkeep
+voices/elevenlabs-registry.json
 uploads/*
 !uploads/.gitkeep
 uploads/generated/
 ai/.venv/
 ai/models/
+ai/__pycache__/
+**/__pycache__/
+*.pyc
 .env
 .env.local
 *.log

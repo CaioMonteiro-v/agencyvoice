@@ -16,6 +16,21 @@ Browser (React)
 2. **Clone** — cria perfil vocal com as amostras do candidato  
 3. **Gera** — texto → fala com o timbre clonado  
 
+## Provedores de voz
+
+| `VOICE_PROVIDER` | Comportamento |
+|------------------|---------------|
+| `auto` (padrão) | ElevenLabs se `ELEVENLABS_API_KEY` existir; senão IA local |
+| `elevenlabs` | Força Instant Voice Cloning + TTS da ElevenLabs |
+| `local` | Força AgencyVoice AI (XTTS) |
+
+```bash
+cp .env.example .env
+# cole ELEVENLABS_API_KEY se quiser qualidade cloud
+```
+
+**Nunca commit a API key.** O arquivo `.env` já está no `.gitignore`.
+
 ## Setup
 
 ```bash

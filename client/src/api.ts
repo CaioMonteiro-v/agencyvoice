@@ -6,6 +6,7 @@ export type VoiceRecord = {
   createdAt: string;
   demo: boolean;
   engine?: string;
+  provider?: "elevenlabs" | "local";
 };
 
 export type HealthResponse = {
@@ -14,6 +15,7 @@ export type HealthResponse = {
   message: string;
   engine?: string;
   device?: string;
+  provider?: "elevenlabs" | "local";
 };
 
 async function parseJson<T>(res: Response): Promise<T> {
