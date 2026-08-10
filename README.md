@@ -20,13 +20,23 @@ Browser (React)
 
 | `VOICE_PROVIDER` | Comportamento |
 |------------------|---------------|
-| `auto` (padrão) | ElevenLabs se `ELEVENLABS_API_KEY` existir; senão IA local |
-| `elevenlabs` | Força Instant Voice Cloning + TTS da ElevenLabs |
-| `local` | Força AgencyVoice AI (XTTS) |
+| `auto` (padrão) | ElevenLabs se `ELEVENLABS_API_KEY` (`sk_…`) existir; senão IA local |
+| `elevenlabs` | SDK oficial `@elevenlabs/elevenlabs-js` (IVC + `textToSpeech.convert`) |
+| `local` | AgencyVoice AI (XTTS) |
+
+ElevenLabs no gateway segue o mesmo padrão do site:
+
+```ts
+elevenlabs.textToSpeech.convert(voiceId, {
+  text,
+  modelId: "eleven_multilingual_v2",
+  outputFormat: "mp3_44100_128",
+});
+```
 
 ```bash
 cp .env.example .env
-# cole ELEVENLABS_API_KEY se quiser qualidade cloud
+# ELEVENLABS_API_KEY=sk_...   ← secret, NÃO o Key ID
 ```
 
 **Nunca commit a API key.** O arquivo `.env` já está no `.gitignore`.
