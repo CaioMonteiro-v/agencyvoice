@@ -9,6 +9,27 @@ export type VoiceRecord = {
   provider?: "elevenlabs" | "local";
 };
 
+export type CreationRecord = {
+  id: string;
+  title: string;
+  voiceId: string;
+  voiceName: string;
+  text: string;
+  textSpoken: string;
+  filename: string;
+  mimeType: string;
+  createdAt: string;
+  provider: string;
+};
+
+export type PronunciationRule = {
+  id: string;
+  word: string;
+  alias: string;
+  note?: string;
+  createdAt: string;
+};
+
 export type HealthResponse = {
   ok: boolean;
   mode: "live" | "booting" | "offline" | "demo";
@@ -30,6 +51,22 @@ async function parseJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+function mapVoice(v: Record<string, unknown>): VoiceRecord {
+  return {
+    id: String(v.id),
+    name: String(v.name),
+    description: v.description ? String(v.description) : undefined,
+    sampleCount: Number(v.sampleCount ?? v.sample_count ?? 0),
+    createdAt: String(v.createdAt ?? v.created_at ?? ""),
+    demo: Boolean(v.demo),
+    engine: v.engine ? String(v.engine) : undefined,
+    provider:
+      v.provider === "elevenlabs" || v.provider === "local"
+        ? v.provider
+        : undefined,
+  };
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch("/api/health");
   return parseJson(res);
@@ -38,15 +75,7 @@ export async function getHealth(): Promise<HealthResponse> {
 export async function listVoices(): Promise<VoiceRecord[]> {
   const res = await fetch("/api/voices");
   const data = await parseJson<{ voices: Array<Record<string, unknown>> }>(res);
-  return data.voices.map((v) => ({
-    id: String(v.id),
-    name: String(v.name),
-    description: v.description ? String(v.description) : undefined,
-    sampleCount: Number(v.sampleCount ?? v.sample_count ?? 0),
-    createdAt: String(v.createdAt ?? v.created_at ?? ""),
-    demo: Boolean(v.demo),
-    engine: v.engine ? String(v.engine) : undefined,
-  }));
+  return data.voices.map(mapVoice);
 }
 
 export async function cloneVoice(params: {
@@ -73,19 +102,7 @@ export async function cloneVoice(params: {
   }>(res);
   return {
     message: data.message,
-    voice: {
-      id: String(data.voice.id),
-      name: String(data.voice.name),
-      description: data.voice.description
-        ? String(data.voice.description)
-        : undefined,
-      sampleCount: Number(
-        data.voice.sampleCount ?? data.voice.sample_count ?? 0
-      ),
-      createdAt: String(data.voice.createdAt ?? data.voice.created_at ?? ""),
-      demo: Boolean(data.voice.demo),
-      engine: data.voice.engine ? String(data.voice.engine) : undefined,
-    },
+    voice: mapVoice(data.voice),
   };
 }
 
@@ -99,7 +116,9 @@ export async function generateSpeech(params: {
   text: string;
   stability: number;
   similarityBoost: number;
-}): Promise<{ blob?: Blob; message?: string }> {
+  title?: string;
+  save?: boolean;
+}): Promise<{ blob?: Blob; message?: string; creationId?: string | null }> {
   const res = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -109,6 +128,8 @@ export async function generateSpeech(params: {
       language: "pt",
       stability: params.stability,
       similarityBoost: params.similarityBoost,
+      title: params.title,
+      save: params.save !== false,
     }),
   });
 
@@ -119,5 +140,59 @@ export async function generateSpeech(params: {
   if (!res.ok) {
     throw new Error("Falha ao gerar áudio na AgencyVoice AI.");
   }
-  return { blob: await res.blob() };
+  return {
+    blob: await res.blob(),
+    creationId: res.headers.get("X-Creation-Id"),
+  };
+}
+
+export async function listCreations(): Promise<CreationRecord[]> {
+  const res = await fetch("/api/creations");
+  const data = await parseJson<{ creations: CreationRecord[] }>(res);
+  return data.creations;
+}
+
+export function creationAudioUrl(id: string): string {
+  return `/api/creations/${id}/audio`;
+}
+
+export async function deleteCreation(id: string): Promise<void> {
+  const res = await fetch(`/api/creations/${id}`, { method: "DELETE" });
+  await parseJson(res);
+}
+
+export async function listPronunciations(): Promise<PronunciationRule[]> {
+  const res = await fetch("/api/pronunciations");
+  const data = await parseJson<{ pronunciations: PronunciationRule[] }>(res);
+  return data.pronunciations;
+}
+
+export async function savePronunciation(params: {
+  word: string;
+  alias: string;
+  note?: string;
+}): Promise<PronunciationRule> {
+  const res = await fetch("/api/pronunciations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const data = await parseJson<{ pronunciation: PronunciationRule }>(res);
+  return data.pronunciation;
+}
+
+export async function deletePronunciation(id: string): Promise<void> {
+  const res = await fetch(`/api/pronunciations/${id}`, { method: "DELETE" });
+  await parseJson(res);
+}
+
+export async function previewPronunciation(
+  text: string
+): Promise<{ original: string; spoken: string }> {
+  const res = await fetch("/api/pronunciations/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  return parseJson(res);
 }

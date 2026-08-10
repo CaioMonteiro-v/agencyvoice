@@ -400,6 +400,90 @@ svg {
   margin-bottom: 1.75rem;
 }
 
+.studio-tabs {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.panel-sub {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+}
+
+.creation-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.creation-item {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  animation: fadeUp 0.4s ease both;
+}
+
+.creation-meta strong {
+  display: block;
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  margin-bottom: 0.15rem;
+}
+
+.creation-meta span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.creation-meta p {
+  margin: 0.55rem 0 0;
+  color: var(--foam);
+  font-size: 0.92rem;
+}
+
+.spoken-hint {
+  color: var(--teal) !important;
+  font-size: 0.85rem !important;
+}
+
+.creation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.creation-player {
+  width: 100%;
+}
+
+.voice-library .voice-item {
+  align-items: flex-start;
+}
+
+.voice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.rule-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.rule-list li {
+  margin-bottom: 0.35rem;
+}
+
+.rule-list strong {
+  color: var(--foam);
+}
+
 .progress button {
   text-align: left;
   padding: 0.9rem 1rem;
@@ -777,9 +861,16 @@ svg {
   }
 }
 
+@media (max-width: 960px) {
+  .studio-tabs {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 @media (max-width: 640px) {
-  .progress {
-    grid-template-columns: 1fr;
+  .progress,
+  .studio-tabs {
+    grid-template-columns: 1fr 1fr;
   }
 
   .hero-brand {

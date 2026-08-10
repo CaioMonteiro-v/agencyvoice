@@ -90,3 +90,8 @@ export async function verifyApiKey(client: ElevenLabsClient) {
 export async function deleteVoice(client: ElevenLabsClient, voiceId: string) {
   return client.voices.delete(voiceId);
 }
+
+export async function listElevenVoices(client: ElevenLabsClient) {
+  const page = await client.voices.search({ pageSize: 100 });
+  return page.voices || [];
+}

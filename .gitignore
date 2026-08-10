@@ -6,6 +6,9 @@ voices/elevenlabs-registry.json
 uploads/*
 !uploads/.gitkeep
 uploads/generated/
+uploads/creations/
+data/*
+!data/.gitkeep
 ai/.venv/
 ai/models/
 ai/__pycache__/
