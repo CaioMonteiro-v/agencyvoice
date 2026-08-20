@@ -40,9 +40,20 @@ export function useAudioRecorder() {
   }, []);
 
   const addFiles = (files: FileList | File[]) => {
-    const list = Array.from(files).filter((f) => f.type.startsWith("audio/") || /\.(webm|wav|mp3|m4a|ogg|flac)$/i.test(f.name));
+    const list = Array.from(files).filter(
+      (f) =>
+        f.type.startsWith("audio/") ||
+        /\.(webm|wav|mp3|m4a|ogg|flac)$/i.test(f.name)
+    );
     if (list.length === 0) {
-      setError("Selecione arquivos de áudio válidos.");
+      setError("Selecione arquivos de áudio válidos (mp3, wav, m4a, webm…).");
+      return;
+    }
+    const tooBig = list.find((f) => f.size > 100 * 1024 * 1024);
+    if (tooBig) {
+      setError(
+        `"${tooBig.name}" passa de 100 MB. Converta para MP3 ou corte o áudio.`
+      );
       return;
     }
     setError(null);
@@ -54,6 +65,24 @@ export function useAudioRecorder() {
       source: "upload" as const,
     }));
     setSamples((prev) => [...prev, ...next]);
+
+    // Tenta ler duração real (útil p/ ~1m50)
+    for (const sample of next) {
+      const audio = new Audio(sample.url);
+      audio.addEventListener("loadedmetadata", () => {
+        if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+        setSamples((prev) =>
+          prev.map((s) =>
+            s.id === sample.id
+              ? {
+                  ...s,
+                  durationLabel: `${formatDuration(Math.round(audio.duration))} · ${(s.file.size / 1024 / 1024).toFixed(1)} MB`,
+                }
+              : s
+          )
+        );
+      });
+    }
   };
 
   const removeSample = (id: string) => {

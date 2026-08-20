@@ -321,12 +321,17 @@ function Studio({ onBack }: { onBack: () => void }) {
       setSamples(result.samples);
       recorder.clearSamples();
       await refreshVoices();
-      setAlert({ type: "ok", text: result.message });
-    } catch (err) {
       setAlert({
-        type: "error",
-        text: err instanceof Error ? err.message : "Erro ao treinar.",
+        type: result.message.toLowerCase().includes("falhou") ? "info" : "ok",
+        text: result.message,
       });
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "Erro ao treinar.";
+      const text =
+        /failed to fetch|networkerror|load failed/i.test(raw)
+          ? "Falha de rede ou o servidor demorou (Render free “acorda” lento). Espere 1 min e tente de novo — se o áudio for WAV grande, mande em MP3."
+          : raw;
+      setAlert({ type: "error", text });
     } finally {
       setBusy(false);
     }
@@ -650,8 +655,14 @@ function Studio({ onBack }: { onBack: () => void }) {
             <div className="profile-section">
               <h3 className="panel-sub">Alimentar a IA</h3>
               <p className="empty" style={{ marginBottom: "1rem" }}>
-                Quanto mais áudio limpo do {activeVoice.name}, melhor o clone.
-                Grave nomes, frases longas e o jeito natural de falar.
+                Pode mandar áudio longo (ex.: 1m50). Passo a passo:{" "}
+                <strong style={{ color: "var(--foam)" }}>1)</strong> grave ou
+                envie o arquivo →{" "}
+                <strong style={{ color: "var(--foam)" }}>2)</strong> ele aparece
+                na fila →{" "}
+                <strong style={{ color: "var(--foam)" }}>3)</strong> clique em
+                “Adicionar e atualizar voz”. Se o WAV for muito pesado, use MP3
+                ou corte em pedaços de 30–60s.
               </p>
               <SampleCapture recorder={recorder} drag={drag} setDrag={setDrag} />
               <div className="actions" style={{ marginTop: "1rem" }}>
@@ -662,8 +673,10 @@ function Studio({ onBack }: { onBack: () => void }) {
                   onClick={handleTrain}
                 >
                   {busy
-                    ? "Treinando…"
-                    : `Adicionar ${recorder.samples.length || ""} áudio(s) e atualizar voz`}
+                    ? "Enviando e treinando… (pode levar um minuto)"
+                    : recorder.samples.length === 0
+                      ? "Coloque um áudio na fila primeiro"
+                      : `Adicionar ${recorder.samples.length} áudio(s) e atualizar voz`}
                 </button>
               </div>
 

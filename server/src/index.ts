@@ -78,12 +78,15 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+/** ~2 min de WAV pode passar de 25 MB — libera até 100 MB por arquivo. */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 20 },
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: 20 },
   fileFilter: (_req, file, cb) => {
     const ok =
-      file.mimetype.startsWith("audio/") ||
+      (file.mimetype && file.mimetype.startsWith("audio/")) ||
       /\.(webm|wav|mp3|m4a|ogg|flac|mpeg)$/i.test(file.originalname);
     if (!ok) {
       cb(new Error("Apenas arquivos de áudio são permitidos"));
@@ -92,6 +95,33 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+function uploadFiles(field = "files", max = 20) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    upload.array(field, max)(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(413).json({
+            error:
+              "Áudio grande demais (máx. 100 MB). Se tiver ~2 min em WAV, converta para MP3 ou corte em pedaços de 30–60s.",
+          });
+        }
+        if (err.code === "LIMIT_FILE_COUNT") {
+          return res.status(400).json({
+            error: "Muitos arquivos de uma vez. Envie até 20 áudios por vez.",
+          });
+        }
+        return res.status(400).json({ error: `Upload: ${err.message}` });
+      }
+      if (err) {
+        return res.status(400).json({
+          error: err instanceof Error ? err.message : "Falha no upload do áudio.",
+        });
+      }
+      return next();
+    });
+  };
+}
 
 async function aiFetch(pathname: string, init?: Parameters<typeof fetch>[1]) {
   return fetch(`${AI_URL}${pathname}`, init);
@@ -287,8 +317,12 @@ app.get("/api/voices", async (_req, res) => {
   return res.json({ voices, provider: resolveProvider() });
 });
 
-app.get("/api/voices/:id", (req, res) => {
-  const voice = store.getVoice(req.params.id);
+app.get("/api/voices/:id", async (req, res) => {
+  let voice = store.getVoice(req.params.id);
+  if (!voice && eleven) {
+    await syncElevenVoicesIntoStore();
+    voice = store.getVoice(req.params.id);
+  }
   if (!voice) {
     return res.status(404).json({ error: "Perfil de voz não encontrado." });
   }
@@ -301,7 +335,7 @@ app.get("/api/voices/:id", (req, res) => {
   });
 });
 
-app.post("/api/voices/clone", upload.array("files", 20), async (req, res) => {
+app.post("/api/voices/clone", uploadFiles("files", 20), async (req, res) => {
   const consent = String(req.body.consent || "") === "true";
   const name = String(req.body.name || "").trim();
   const description = String(req.body.description || "").trim();
@@ -431,27 +465,40 @@ app.post("/api/voices/clone", upload.array("files", 20), async (req, res) => {
 });
 
 /** Alimenta o perfil com mais áudios e atualiza o clone (treinar). */
-app.post(
-  "/api/voices/:id/samples",
-  upload.array("files", 20),
-  async (req, res) => {
-    const voice = store.getVoice(req.params.id);
-    if (!voice) {
-      return res.status(404).json({ error: "Perfil de voz não encontrado." });
-    }
-    const files = (req.files as Express.Multer.File[]) || [];
-    if (files.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "Envie pelo menos um áudio para treinar." });
-    }
+app.post("/api/voices/:id/samples", uploadFiles("files", 20), async (req, res) => {
+  let voice = store.getVoice(req.params.id);
+  if (!voice && eleven) {
+    await syncElevenVoicesIntoStore();
+    voice = store.getVoice(req.params.id);
+  }
+  if (!voice) {
+    return res.status(404).json({
+      error:
+        "Perfil não encontrado neste servidor (pode ter reiniciado). Abra a Biblioteca de novo e clique no perfil.",
+    });
+  }
+  const files = (req.files as Express.Multer.File[]) || [];
+  if (files.length === 0) {
+    return res
+      .status(400)
+      .json({ error: "Envie pelo menos um áudio para treinar." });
+  }
 
-    const source =
-      String(req.body.source || "") === "record" ? "record" : "upload";
+  const source =
+    String(req.body.source || "") === "record" ? "record" : "upload";
+
+  const totalBytes = files.reduce((n, f) => n + (f.size || f.buffer.length), 0);
+  console.log(
+    `Treino ${voice.name}: ${files.length} arquivo(s), ${(totalBytes / 1024 / 1024).toFixed(1)} MB`
+  );
+
+  try {
+    // Sempre guarda local primeiro — assim o áudio não se perde se a cloud falhar
+    const saved = saveUploadedSamples(voice.id, files, source);
+    let remoteOk = true;
+    let remoteWarning: string | undefined;
 
     try {
-      const saved = saveUploadedSamples(voice.id, files, source);
-
       if (voice.provider === "elevenlabs" && eleven) {
         await addSamplesToVoice(eleven, {
           voiceId: voice.id,
@@ -477,19 +524,12 @@ app.post(
         });
         if (!r.ok) {
           const errText = await r.text();
-          let detail: unknown = errText;
-          try {
-            detail = JSON.parse(errText);
-          } catch {
-            /* keep */
-          }
-          return res.status(r.status).json({
-            error: "Falha ao atualizar o perfil local com novas amostras.",
-            detail,
-          });
+          remoteOk = false;
+          remoteWarning =
+            "Áudio salvo na Biblioteca, mas a IA local não atualizou. Tente de novo ou use MP3.";
+          console.warn("AI train failed:", errText.slice(0, 400));
         }
       } else if (eleven) {
-        // voz remota sem provider marcado — tenta ElevenLabs
         await addSamplesToVoice(eleven, {
           voiceId: voice.id,
           name: voice.name,
@@ -500,25 +540,37 @@ app.post(
           })),
         });
       }
-
-      const updated = store.markTrained(voice.id);
-      return res.json({
-        voice: updated || store.getVoice(voice.id),
-        samples: store.listSamples(voice.id),
-        added: saved,
-        message: `${saved.length} áudio(s) adicionados. A voz de ${voice.name} foi atualizada — continue alimentando para ficar melhor.`,
-      });
-    } catch (err) {
-      console.error(err);
-      return res.status(503).json({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Falha ao treinar com novas amostras.",
-      });
+    } catch (remoteErr) {
+      remoteOk = false;
+      const msg =
+        remoteErr instanceof Error ? remoteErr.message : String(remoteErr);
+      console.warn("Remote train failed:", msg);
+      remoteWarning =
+        msg.includes("too large") || msg.includes("payload") || msg.includes("413")
+          ? "Áudio salvo aqui, mas a ElevenLabs rejeitou (arquivo grande). Corte em pedaços de 30–60s ou envie MP3."
+          : `Áudio salvo na Biblioteca, mas a atualização na cloud falhou: ${msg.slice(0, 180)}`;
     }
+
+    const updated = store.markTrained(voice.id);
+    return res.json({
+      voice: updated || store.getVoice(voice.id),
+      samples: store.listSamples(voice.id),
+      added: saved,
+      remoteOk,
+      message: remoteOk
+        ? `${saved.length} áudio(s) adicionados (~${(totalBytes / 1024 / 1024).toFixed(1)} MB). A voz de ${voice.name} foi atualizada.`
+        : `${saved.length} áudio(s) ficaram no perfil. ${remoteWarning || "Atualização remota falhou."}`,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(503).json({
+      error:
+        err instanceof Error
+          ? err.message
+          : "Falha ao treinar com novas amostras.",
+    });
   }
-);
+});
 
 app.get("/api/voices/:id/samples", (req, res) => {
   const voice = store.getVoice(req.params.id);

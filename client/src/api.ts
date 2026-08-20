@@ -54,12 +54,24 @@ export type HealthResponse = {
 };
 
 async function parseJson<T>(res: Response): Promise<T> {
-  const data = await res.json().catch(() => ({}));
+  const text = await res.text();
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text.slice(0, 240) };
+    }
+  }
   if (!res.ok) {
     const err =
       (data as { error?: string; detail?: string }).error ||
       (data as { detail?: string }).detail ||
-      res.statusText;
+      (res.status === 413
+        ? "Arquivo grande demais para o servidor."
+        : res.status === 404
+          ? "Perfil não encontrado. Volte à Biblioteca e abra de novo."
+          : res.statusText || `Erro HTTP ${res.status}`);
     throw new Error(typeof err === "string" ? err : JSON.stringify(err));
   }
   return data as T;
