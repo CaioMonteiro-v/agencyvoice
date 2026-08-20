@@ -1,0 +1,22 @@
+# Blueprint Render — AgencyVoice (ElevenLabs cloud)
+# https://dashboard.render.com/select-repo?type=blueprint
+
+services:
+  - type: web
+    name: agencyvoice
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: cursor/agencyvoice-clonagem-voz-7a78
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "3001"
+      - key: VOICE_PROVIDER
+        value: elevenlabs
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production

@@ -1,0 +1,21 @@
+{
+  "name": "agencyvoice",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AgencyVoice AI — clonagem de voz própria para campanhas",
+  "scripts": {
+    "dev": "concurrently -n ai,gateway,client -c teal,blue,amber \"npm run dev:ai\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:ai": "cd ai && COQUI_TOS_AGREED=1 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:client": "npm run dev --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "build": "npm run build --prefix client",
+    "start": "concurrently -n ai,gateway -c teal,blue \"npm run start:ai\" \"npm run start --prefix server\"",
+    "start:web": "npm run start --prefix server",
+    "start:ai": "cd ai && COQUI_TOS_AGREED=1 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000",
+    "setup:ai": "cd ai && python3 -m venv .venv && .venv/bin/pip install -U pip && .venv/bin/pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu && .venv/bin/pip install -r requirements.txt",
+    "install:all": "npm install && npm install --prefix client && npm install --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

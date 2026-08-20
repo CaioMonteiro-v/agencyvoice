@@ -1,0 +1,11 @@
+{
+  "name": "agencyvoice",
+  "install": "npm run install:all\nnpm run build",
+  "terminals": [
+    {
+      "name": "web",
+      "command": "npm run start:web",
+      "description": "Gateway Express + frontend estático (Render-compatible)"
+    }
+  ]
+}

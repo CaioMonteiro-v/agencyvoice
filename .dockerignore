@@ -1,0 +1,17 @@
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+ai/.venv
+ai/__pycache__
+uploads
+voices
+.git
+.env
+.env.local
+*.log
+*.wav
+*.mp3
+*.webm
+*.pth
+*.pt
