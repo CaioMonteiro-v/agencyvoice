@@ -158,14 +158,14 @@ function SampleCapture({
         >
           <input
             type="file"
-            accept="audio/*,.mp3,.wav,.webm,.m4a,.ogg"
+            accept="audio/*,video/mp4,.mp3,.wav,.webm,.m4a,.ogg,.mp4,.aac,.opus"
             multiple
             onChange={(e) => {
               if (e.target.files) recorder.addFiles(e.target.files);
               e.target.value = "";
             }}
           />
-          Ou arraste / envie arquivos de áudio
+          Ou arraste / envie arquivos (WhatsApp MP4, MP3, WAV…)
         </div>
       </div>
       <div>

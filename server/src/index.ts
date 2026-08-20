@@ -85,11 +85,21 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 20 },
   fileFilter: (_req, file, cb) => {
+    const name = file.originalname || "";
+    const type = (file.mimetype || "").toLowerCase();
     const ok =
-      (file.mimetype && file.mimetype.startsWith("audio/")) ||
-      /\.(webm|wav|mp3|m4a|ogg|flac|mpeg)$/i.test(file.originalname);
+      type.startsWith("audio/") ||
+      type === "video/mp4" ||
+      type === "application/mp4" ||
+      type === "video/quicktime" ||
+      /\.(webm|wav|mp3|m4a|ogg|flac|mpeg|mp4|aac|opus|caf|3gp)$/i.test(name) ||
+      /whatsapp\s*audio/i.test(name);
     if (!ok) {
-      cb(new Error("Apenas arquivos de áudio são permitidos"));
+      cb(
+        new Error(
+          "Formato não suportado. Use áudio do WhatsApp (MP4), MP3, WAV ou M4A."
+        )
+      );
       return;
     }
     cb(null, true);

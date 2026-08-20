@@ -18,6 +18,46 @@ function formatDuration(seconds: number) {
   return `${m}:${s}`;
 }
 
+/** WhatsApp manda “áudio” como MP4/M4A (container), às vezes sem extensão. */
+function isLikelyAudioFile(file: File): boolean {
+  const name = file.name || "";
+  const type = (file.type || "").toLowerCase();
+  if (type.startsWith("audio/")) return true;
+  // Áudio do WhatsApp no Windows aparece como "Arquivo MP4" / video/mp4
+  if (
+    type === "video/mp4" ||
+    type === "application/mp4" ||
+    type === "video/quicktime"
+  ) {
+    return true;
+  }
+  if (/\.(webm|wav|mp3|m4a|ogg|flac|mpeg|mp4|aac|opus|caf|3gp)$/i.test(name)) {
+    return true;
+  }
+  // Nome típico do WhatsApp sem extensão clara
+  if (/whatsapp\s*audio/i.test(name)) return true;
+  return false;
+}
+
+function normalizeAudioFile(file: File): File {
+  const name = file.name || "whatsapp-audio.mp4";
+  const hasExt = /\.[a-z0-9]+$/i.test(name);
+  if (hasExt) return file;
+  const type = (file.type || "").toLowerCase();
+  const ext =
+    type.includes("mpeg") || type.includes("mp3")
+      ? ".mp3"
+      : type.includes("wav")
+        ? ".wav"
+        : type.includes("ogg") || type.includes("opus")
+          ? ".ogg"
+          : ".mp4";
+  return new File([file], `${name}${ext}`, {
+    type: file.type || "audio/mp4",
+    lastModified: file.lastModified,
+  });
+}
+
 export function useAudioRecorder() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -40,13 +80,11 @@ export function useAudioRecorder() {
   }, []);
 
   const addFiles = (files: FileList | File[]) => {
-    const list = Array.from(files).filter(
-      (f) =>
-        f.type.startsWith("audio/") ||
-        /\.(webm|wav|mp3|m4a|ogg|flac)$/i.test(f.name)
-    );
+    const list = Array.from(files).filter((f) => isLikelyAudioFile(f));
     if (list.length === 0) {
-      setError("Selecione arquivos de áudio válidos (mp3, wav, m4a, webm…).");
+      setError(
+        "Arquivo não reconhecido. Áudio do WhatsApp em MP4/M4A agora é aceito — se ainda falhar, renomeie para .mp4 ou exporte em MP3."
+      );
       return;
     }
     const tooBig = list.find((f) => f.size > 100 * 1024 * 1024);
@@ -59,7 +97,7 @@ export function useAudioRecorder() {
     setError(null);
     const next: Sample[] = list.map((file) => ({
       id: crypto.randomUUID(),
-      file,
+      file: normalizeAudioFile(file),
       url: URL.createObjectURL(file),
       durationLabel: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
       source: "upload" as const,
